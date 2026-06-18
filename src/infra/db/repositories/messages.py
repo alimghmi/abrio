@@ -1,8 +1,9 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from domain.enums import MessageStatus
 from domain.errors import MessageNotFoundError
 from infra.db.models.message import Message
 
@@ -37,3 +38,19 @@ class MessageRepository:
         new_message = Message(**payload)
         self.session.add(new_message)
         return new_message
+
+    def calculate_summary(self, user_id: int) -> dict[str, int]:
+        query = select(
+            func.count(Message.id).label("total"),
+            func.count(Message.id).filter(Message.status == MessageStatus.QUEUED).label("queued"),
+            func.count(Message.id).filter(Message.status == MessageStatus.SENT).label("sent"),
+            func.count(Message.id).filter(Message.status == MessageStatus.FAILED).label("failed"),
+        ).where(Message.user_id == user_id)
+        result = self.session.execute(query).one()
+        return {
+            "user_id": user_id,
+            "total": result.total,
+            "queued": result.queued,
+            "sent": result.sent,
+            "failed": result.failed,
+        }

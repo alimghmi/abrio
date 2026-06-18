@@ -27,3 +27,11 @@ class MessageResponse(BaseModel):
     payment_status: PaymentStatus
     created_at: datetime
     updated_at: datetime
+
+
+class MessagesSummaryResponse(BaseModel):
+    user_id: int
+    total: int
+    queued: int
+    sent: int
+    failed: int

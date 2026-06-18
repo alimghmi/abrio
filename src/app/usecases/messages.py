@@ -44,3 +44,6 @@ class MessageUseCase:
             raise e
 
         return message
+
+    def calculate_summary(self, user_id: int) -> dict[str, int]:
+        return self._repo.calculate_summary(user_id=user_id)

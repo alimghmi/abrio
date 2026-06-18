@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 
 from api.deps import get_message_usecase
-from api.schemas.messages import MessageRequest, MessageResponse
+from api.schemas.messages import MessageRequest, MessageResponse, MessagesSummaryResponse
 from app.usecases.messages import MessageUseCase
 
 router = APIRouter()
@@ -21,14 +21,15 @@ async def get_user_messages(user_id: int, usecase: MessageUseCase = Depends(get_
     return usecase.get_user_messages(user_id=user_id)
 
 
+@router.get("/summary", status_code=status.HTTP_200_OK, response_model=MessagesSummaryResponse)
+async def get_user_messages_summary(
+    user_id: int, usecase: MessageUseCase = Depends(get_message_usecase)
+):
+    return usecase.calculate_summary(user_id=user_id)
+
+
 @router.get("/{message_id}", status_code=status.HTTP_200_OK, response_model=MessageResponse)
 async def get_message_by_id(
     message_id: UUID, user_id: int, usecase: MessageUseCase = Depends(get_message_usecase)
 ):
     return usecase.get_user_message(message_id=message_id, user_id=user_id)
-
-
-@router.get("/summary", status_code=status.HTTP_200_OK)
-async def get_user_messages_summary(user_id: int):
-    # WIP
-    return {"status": user_id}
