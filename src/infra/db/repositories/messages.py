@@ -1,9 +1,9 @@
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from domain.enums import MessageStatus
+from domain.enums import MessageStatus, PaymentStatus
 from domain.errors import MessageNotFoundError
 from infra.db.models.message import Message
 
@@ -26,6 +26,14 @@ class MessageRepository:
 
         return message
 
+    def _get_message(self, message_id: UUID) -> Message:
+        query = select(Message).where(Message.id == message_id)
+        message = self.session.scalar(query)
+        if message is None:
+            raise MessageNotFoundError(message_id=message_id)
+
+        return message
+
     def get_user_message(self, message_id: UUID, user_id: int) -> Message:
         query = select(Message).where(Message.id == message_id, Message.user_id == user_id)
         message = self.session.scalar(query)
@@ -39,14 +47,46 @@ class MessageRepository:
         self.session.add(new_message)
         return new_message
 
+    def update_message_status(self, message_id: UUID, status: MessageStatus):
+        query = (
+            update(Message).where(Message.id == message_id).values(status=status).returning(Message)
+        )
+        message = self.session.scalar(query)
+        if message is None:
+            raise MessageNotFoundError(message_id=message_id)
+
+        return message
+
+    def update_message_payment_status(self, message_id: UUID, payment_status: PaymentStatus):
+        query = (
+            update(Message)
+            .where(Message.id == message_id)
+            .values(payment_status=payment_status)
+            .returning(Message)
+        )
+        message = self.session.scalar(query)
+        if message is None:
+            raise MessageNotFoundError(message_id=message_id)
+
+        return message
+
     def calculate_summary(self, user_id: int) -> dict[str, int]:
         query = select(
             func.count(Message.id).label("total"),
+
             func.count(Message.id).filter(Message.status == MessageStatus.QUEUED).label("queued"),
-            func.count(Message.id).filter(Message.status == MessageStatus.DISPATCHING).label("dispatching"),
+
+            func.count(Message.id)
+            .filter(Message.status == MessageStatus.DISPATCHING)
+            .label("dispatching"),
+
             func.count(Message.id).filter(Message.status == MessageStatus.FAILED).label("failed"),
+
             func.count(Message.id).filter(Message.status == MessageStatus.SENT).label("sent"),
-            func.count(Message.id).filter(Message.status == MessageStatus.PERMANENT_FAILED).label("permanent_failed"),
+
+            func.count(Message.id)
+            .filter(Message.status == MessageStatus.PERMANENT_FAILED)
+            .label("permanent_failed"),
         ).where(Message.user_id == user_id)
         result = self.session.execute(query).one()
         return {
