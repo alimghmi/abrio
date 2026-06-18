@@ -33,5 +33,7 @@ class MessagesSummaryResponse(BaseModel):
     user_id: int
     total: int
     queued: int
-    sent: int
+    dispatching: int
     failed: int
+    sent: int
+    permanent_failed: int

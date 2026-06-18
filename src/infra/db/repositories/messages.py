@@ -43,14 +43,18 @@ class MessageRepository:
         query = select(
             func.count(Message.id).label("total"),
             func.count(Message.id).filter(Message.status == MessageStatus.QUEUED).label("queued"),
-            func.count(Message.id).filter(Message.status == MessageStatus.SENT).label("sent"),
+            func.count(Message.id).filter(Message.status == MessageStatus.DISPATCHING).label("dispatching"),
             func.count(Message.id).filter(Message.status == MessageStatus.FAILED).label("failed"),
+            func.count(Message.id).filter(Message.status == MessageStatus.SENT).label("sent"),
+            func.count(Message.id).filter(Message.status == MessageStatus.PERMANENT_FAILED).label("permanent_failed"),
         ).where(Message.user_id == user_id)
         result = self.session.execute(query).one()
         return {
             "user_id": user_id,
             "total": result.total,
             "queued": result.queued,
-            "sent": result.sent,
+            "dispatching": result.dispatching,
             "failed": result.failed,
+            "sent": result.sent,
+            "permanent_failed": result.permanent_failed,
         }

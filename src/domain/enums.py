@@ -9,9 +9,9 @@ class MessagePriority(Enum):
 class MessageStatus(Enum):
     QUEUED = "queued"
     DISPATCHING = "dispatching"
-    SENT = "sent"
     FAILED = "failed"
-    DELIVERED = "delivered"
+    SENT = "sent"
+    PERMANENT_FAILED = "permanent_failed"
 
 
 class PaymentStatus(Enum):
