@@ -22,7 +22,7 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings()
 
     assert settings.app_name == "gateway"
-    assert settings.api_prefix == "/api/v1"
+    assert settings.api_prefix == "/api"
     assert settings.log_level == "INFO"
     assert settings.log_json is False
     assert settings.db_create_all is True

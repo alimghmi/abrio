@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     app_name: str = "sms-gateway"
     app_env: str = "local"
     app_debug: bool = False
-    api_prefix: str = "/api/v1"
+    api_prefix: str = "/api"
     log_level: str = "INFO"
     log_json: bool = False
 

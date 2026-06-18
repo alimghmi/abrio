@@ -9,7 +9,7 @@ services:
       APP_NAME: ${APP_NAME:-sms-gateway}
       APP_ENV: ${APP_ENV:-local}
       APP_DEBUG: ${APP_DEBUG:-true}
-      API_PREFIX: ${API_PREFIX:-/api/v1}
+      API_PREFIX: ${API_PREFIX:-/api}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_JSON: ${LOG_JSON:-false}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://sms_gateway:sms_gateway@postgres:5432/sms_gateway}

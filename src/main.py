@@ -1,8 +1,8 @@
 from fastapi import FastAPI
 
-from api.router import api_router
 from core.config import get_settings
 from core.logging import configure_logging, get_logger
+from src.api.v1.router import api_router
 
 
 def create_app() -> FastAPI:
