@@ -10,7 +10,7 @@ class UserUseCase:
         self.session = session
         self._repo = UserRepository(session)
 
-    def get_users(self):
+    def get_users(self) -> list[User]:
         return self._repo.get_users()
 
     def get_user(self, user_id: int) -> User:
