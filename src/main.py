@@ -17,7 +17,6 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         debug=settings.app_debug,
     )
-    # app.add_exception_handler(AppError, app_error_handler)
     app.include_router(api_router, prefix=settings.api_prefix)
     logger.info("application_created", extra={"api_prefix": settings.api_prefix})
     return app

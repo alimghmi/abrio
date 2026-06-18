@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, status
 
 from api.deps import get_balance_usecase, get_user_usecase
-from api.schemas.users import BalanceIDResponse, CreateUserRequest, TopUpUserBalance, UserResponse
+from api.schemas.balance import BalanceIDResponse, TopUpUserBalance
+from api.schemas.users import CreateUserRequest, UserResponse
 from app.usecases.balance import BalanceUseCase
 from app.usecases.users import UserUseCase
 
@@ -10,7 +11,7 @@ router = APIRouter()
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=list[UserResponse])
 async def get_users(usecase: UserUseCase = Depends(get_user_usecase)):
-    return usecase.repo.get_users()
+    return usecase.get_users()
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=UserResponse)
@@ -20,7 +21,7 @@ async def create_user(payload: CreateUserRequest, usecase: UserUseCase = Depends
 
 @router.get("/{user_id}", status_code=status.HTTP_200_OK, response_model=UserResponse)
 async def get_user(user_id: int, usecase: UserUseCase = Depends(get_user_usecase)):
-    return usecase.repo.get_user(user_id=user_id)
+    return usecase.get_user(user_id=user_id)
 
 
 @router.post("/{user_id}/topup", status_code=status.HTTP_200_OK, response_model=BalanceIDResponse)

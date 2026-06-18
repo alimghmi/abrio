@@ -2,18 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
-class BalanceResponse(BaseModel):
-    credits: int
-    reserved_credits: int
-    available_credits: int
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class BalanceIDResponse(BalanceResponse):
-    user_id: int
+from api.schemas.balance import BalanceResponse
 
 
 class UserResponse(BaseModel):
@@ -27,7 +16,3 @@ class UserResponse(BaseModel):
 
 class CreateUserRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-
-
-class TopUpUserBalance(BaseModel):
-    credit_amount: int = Field(gt=0)

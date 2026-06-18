@@ -3,7 +3,8 @@ import asyncio
 import pytest
 
 from api.routes import users as user_routes
-from api.schemas.users import CreateUserRequest, TopUpUserBalance
+from api.schemas.balance import TopUpUserBalance
+from api.schemas.users import CreateUserRequest
 from app.usecases.balance import BalanceUseCase
 from app.usecases.users import UserUseCase
 from domain.errors import UserNotFoundError

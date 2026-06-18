@@ -8,12 +8,8 @@ from pydantic import ValidationError
 
 from api.deps import get_balance_usecase, get_user_usecase
 from api.routes import users as user_routes
-from api.schemas.users import (
-    BalanceIDResponse,
-    CreateUserRequest,
-    TopUpUserBalance,
-    UserResponse,
-)
+from api.schemas.balance import BalanceIDResponse, TopUpUserBalance
+from api.schemas.users import CreateUserRequest, UserResponse
 from app.usecases.balance import BalanceUseCase
 from app.usecases.users import UserUseCase
 from infra.db.models.balance import Balance
@@ -51,13 +47,6 @@ class FakeUserRepo:
     def __init__(self) -> None:
         self.user = FakeUser()
 
-    def get_users(self) -> list[FakeUser]:
-        return [self.user]
-
-    def get_user(self, user_id: int) -> FakeUser:
-        assert user_id == self.user.id
-        return self.user
-
 
 class FakeUserUseCase:
     def __init__(self) -> None:
@@ -65,6 +54,13 @@ class FakeUserUseCase:
 
     def create_user(self, payload: CreateUserRequest) -> FakeUser:
         return FakeUser(name=payload.name)
+
+    def get_users(self) -> list[FakeUser]:
+        return [self.repo.user]
+
+    def get_user(self, user_id: int) -> FakeUser:
+        assert user_id == self.repo.user.id
+        return self.repo.user
 
 
 class FakeBalanceUseCase:
