@@ -20,7 +20,7 @@ class Message(Base):
     recipient: Mapped[str] = mapped_column(String(13))
     body: Mapped[str] = mapped_column(String(70))
     priority: Mapped[MessagePriority] = mapped_column(index=True)
-    idempotency_key: Mapped[UUID]
+    idempotency_key: Mapped[UUID] = mapped_column(index=True)
     status: Mapped[MessageStatus] = mapped_column(index=True, default=MessageStatus.QUEUED)
     payment_status: Mapped[PaymentStatus] = mapped_column(default=PaymentStatus.RESERVED)
     created_at: Mapped[datetime] = mapped_column(
