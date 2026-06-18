@@ -34,6 +34,7 @@ class Balance(Base):
         CheckConstraint("credits >= 0", name="check_credits_non_negative"),
         CheckConstraint("credits >= reserved_credits", name="check_credits_ge_reserved_credits"),
         CheckConstraint("reserved_credits >= 0", name="check_reserved_credits_non_negative"),
+        CheckConstraint("updated_at >= created_at", name="check_updated_at_ge_created_at"),
     )
 
     @hybrid_property
