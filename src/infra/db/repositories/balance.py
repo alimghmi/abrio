@@ -9,11 +9,51 @@ class BalanceRepositry:
     def __init__(self, session: Session):
         self.session = session
 
-    def get_by_user_id(self, user_id: int) -> Balance | None:
+    def get_by_user_id(self, user_id: int) -> Balance:
         query = select(Balance).where(Balance.user_id == user_id).with_for_update()
         balance = self.session.scalar(query)
 
         if balance is None:
             raise UserNotFoundError(user_id)
 
+        return balance
+
+    def _topup_user_credits(self, user_id: int, amount: int = 1) -> Balance:
+        amount = abs(amount)
+        balance = self.get_by_user_id(user_id=user_id)
+        balance.credits += amount
+        return balance
+
+    def _deduct_user_credits(self, user_id: int, amount: int = 1) -> Balance:
+        amount = abs(amount)
+        balance = self.get_by_user_id(user_id=user_id)
+        balance.credits -= amount
+        return balance
+
+    def _topup_user_reserved_credits(self, user_id: int, amount: int = 1) -> Balance:
+        amount = abs(amount)
+        balance = self.get_by_user_id(user_id=user_id)
+        balance.reserved_credits += amount
+        return balance
+
+    def _deduct_user_reserved_credits(self, user_id: int, amount: int = 1) -> Balance:
+        amount = abs(amount)
+        balance = self.get_by_user_id(user_id=user_id)
+        balance.reserved_credits -= amount
+        return balance
+
+    def _zero_user_credits(self, user_id: int) -> Balance:
+        balance = self.get_by_user_id(user_id=user_id)
+        balance.credits = 0
+        balance.reserved_credits = 0
+        return balance
+
+    def reserve_credits(self, user_id: int, amount: int) -> Balance:
+        return self._topup_user_reserved_credits(user_id=user_id, amount=amount)
+
+    def settle(self, user_id: int, amount: int) -> Balance:
+        amount = abs(amount)
+        balance = self.get_by_user_id(user_id=user_id)
+        balance.reserved_credits -= amount
+        balance.credits -= amount
         return balance
