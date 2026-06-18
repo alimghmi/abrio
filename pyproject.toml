@@ -8,7 +8,6 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
     "sqlalchemy>=2.0.0",
     "psycopg[binary]>=3.2.0",
-    "alembic>=1.13.0",
     "pydantic-settings>=2.4.0",
     "celery>=5.4.0",
     "redis>=5.0.0",
@@ -76,7 +75,6 @@ mypy_path = "src"
 [[tool.mypy.overrides]]
 module = [
     "celery.*",
-    "prometheus_client.*",
 ]
 ignore_missing_imports = true
 
@@ -87,7 +85,7 @@ addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
-    "--cov=gateway",
+    "--cov=src",
     "--cov-report=term-missing",
 ]
 markers = [
@@ -98,7 +96,7 @@ markers = [
 
 [tool.coverage.run]
 branch = true
-source = ["src/gateway"]
+source = ["src"]
 
 [tool.coverage.report]
 show_missing = true
