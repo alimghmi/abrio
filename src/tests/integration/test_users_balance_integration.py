@@ -4,12 +4,15 @@ import pytest
 
 from api.routes import users as user_routes
 from api.schemas.balance import TopUpUserBalance
+from api.schemas.pagination import PaginationParams
 from api.schemas.users import CreateUserRequest
 from app.usecases.balance import BalanceUseCase
 from app.usecases.users import UserUseCase
 from domain.errors import UserNotFoundError
 from main import create_app
 from tests.conftest import SessionFactory
+
+pytestmark = pytest.mark.integration
 
 
 def test_users_balance_endpoint_flow(db_session_factory: SessionFactory) -> None:
@@ -29,11 +32,16 @@ def test_users_balance_endpoint_flow(db_session_factory: SessionFactory) -> None
         assert created.balance.available_credits == 0
 
     with db_session_factory() as session:
-        users = asyncio.run(user_routes.get_users(UserUseCase(session)))
+        users = asyncio.run(
+            user_routes.get_users(
+                params=PaginationParams(page=1, size=20),
+                usecase=UserUseCase(session),
+            )
+        )
 
-        assert len(users) == 1
-        assert users[0].id == user_id
-        assert users[0].name == "Ada"
+        assert users.total == 1
+        assert users.items[0].id == user_id
+        assert users.items[0].name == "Ada"
 
     with db_session_factory() as session:
         fetched = asyncio.run(user_routes.get_user(user_id, UserUseCase(session)))

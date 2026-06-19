@@ -11,19 +11,10 @@ class BalanceUseCase:
 
     def topup_user_credits(self, user_id: int, credit_amount: int) -> Balance:
         with self.session.begin():
-            balance = self._repo.get_by_user_id(user_id=user_id)
-            if not balance:
-                raise ValueError("User balance record not found")
-
-            balance.credits += credit_amount
+            balance = self._repo._topup_user_credits(user_id=user_id, amount=credit_amount)
             return balance
 
     def zero_user_credits(self, user_id: int) -> Balance:
         with self.session.begin():
-            balance = self._repo.get_by_user_id(user_id=user_id)
-            if not balance:
-                raise ValueError("User balance record not found")
-
-            balance.credits = 0
-            balance.reserved_credits = 0
+            balance = self._repo._zero_user_credits(user_id=user_id)
             return balance

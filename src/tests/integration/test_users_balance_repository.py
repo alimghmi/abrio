@@ -11,6 +11,8 @@ from infra.db.repositories.balance import BalanceRepositry
 from infra.db.repositories.users import UserRepository
 from tests.conftest import SeedUser, SessionFactory
 
+pytestmark = pytest.mark.integration
+
 
 def test_user_repository_create_user_adds_zero_balance(db_session_factory: SessionFactory) -> None:
     with db_session_factory() as session:

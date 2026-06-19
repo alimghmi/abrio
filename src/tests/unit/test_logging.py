@@ -1,7 +1,11 @@
 import logging
 
+import pytest
+
 from core.config import Settings
 from core.logging import configure_logging, get_logger
+
+pytestmark = pytest.mark.unit
 
 
 def test_configure_logging_sets_root_level() -> None:
