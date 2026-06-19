@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
@@ -6,6 +7,7 @@ from api.deps import get_message_usecase
 from api.schemas.messages import MessageRequest, MessageResponse, MessagesSummaryResponse
 from api.schemas.pagination import PaginatedResponse, PaginationParams
 from app.usecases.messages import MessageUseCase
+from domain.enums import MessagePriority, MessageStatus, PaymentStatus
 
 router = APIRouter()
 
@@ -18,12 +20,29 @@ async def send_message(
 
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=PaginatedResponse[MessageResponse])
-async def get_user_messages(
-    user_id: int,
+async def get_messages(
+    user_id: int | None = None,
+    status: MessageStatus | None = None,
+    priority: MessagePriority | None = None,
+    payment_status: PaymentStatus | None = None,
+    created_after: datetime | None = None,
+    created_before: datetime | None = None,
+    updated_after: datetime | None = None,
+    updated_before: datetime | None = None,
     params: PaginationParams = Depends(),
     usecase: MessageUseCase = Depends(get_message_usecase),
 ):
-    return usecase.get_user_messages_slice(params=params, user_id=user_id)
+    return usecase.get_messages_slice(
+        user_id=user_id,
+        status=status,
+        priority=priority,
+        payment_status=payment_status,
+        created_after=created_after,
+        created_before=created_before,
+        updated_after=updated_after,
+        updated_before=updated_before,
+        params=params,
+    )
 
 
 @router.get("/summary", status_code=status.HTTP_200_OK, response_model=MessagesSummaryResponse)

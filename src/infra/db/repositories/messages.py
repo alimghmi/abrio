@@ -1,9 +1,10 @@
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from domain.enums import MessageStatus, PaymentStatus
+from domain.enums import MessagePriority, MessageStatus, PaymentStatus
 from domain.errors import MessageNotFoundError
 from infra.db.models.message import Message
 
@@ -16,13 +17,49 @@ class MessageRepository:
         query = select(Message).where(Message.user_id == user_id)
         return list(self.session.scalars(query).all())
 
-    def get_user_messages_slice(
-        self, limit: int, offset: int, **kwargs
+    def get_messages_slice(
+        self,
+        limit: int,
+        offset: int,
+        user_id: int | None = None,
+        status: MessageStatus | None = None,
+        priority: MessagePriority | None = None,
+        payment_status: PaymentStatus | None = None,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+        updated_after: datetime | None = None,
+        updated_before: datetime | None = None,
     ) -> tuple[list[Message], int]:
-        user_filter = Message.user_id == kwargs.get("user_id")
-        count_query = select(func.count(Message.id)).where(user_filter)
+        data_query = select(Message)
+        count_query = select(func.count(Message.id))
+
+        if user_id:
+            data_query = select(Message).where(Message.user_id == user_id)
+            count_query = select(func.count(Message.id)).where(Message.user_id == user_id)
+        if status:
+            data_query = data_query.where(Message.status == status)
+            count_query = count_query.where(Message.status == status)
+        if priority:
+            data_query = data_query.where(Message.priority == priority)
+            count_query = count_query.where(Message.priority == priority)
+        if payment_status:
+            data_query = data_query.where(Message.payment_status == payment_status)
+            count_query = count_query.where(Message.payment_status == payment_status)
+        if created_after:
+            data_query = data_query.where(Message.created_at >= created_after)
+            count_query = count_query.where(Message.created_at >= created_after)
+        if created_before:
+            data_query = data_query.where(Message.created_at <= created_before)
+            count_query = count_query.where(Message.created_at <= created_before)
+        if updated_after:
+            data_query = data_query.where(Message.updated_at >= updated_after)
+            count_query = count_query.where(Message.updated_at >= updated_after)
+        if updated_before:
+            data_query = data_query.where(Message.updated_at <= updated_before)
+            count_query = count_query.where(Message.updated_at <= updated_before)
+
+        data_query = data_query.limit(limit).offset(offset).order_by(Message.created_at.desc())
         total_count = self.session.scalar(count_query) or 0
-        data_query = select(Message).where(user_filter).limit(limit).offset(offset)
         messages = list(self.session.scalars(data_query).all())
         return messages, total_count
 

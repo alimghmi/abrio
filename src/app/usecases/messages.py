@@ -23,9 +23,9 @@ class MessageUseCase:
     def get_user_messages(self, user_id: int) -> list[Message]:
         return self._repo.get_user_messages(user_id=user_id)
 
-    def get_user_messages_slice(self, params: PaginationParams, **kwargs):
-        messages, total = self._repo.get_user_messages_slice(
-            limit=params.limit, offset=params.offset, **kwargs
+    def get_messages_slice(self, params: PaginationParams, **filters):
+        messages, total = self._repo.get_messages_slice(
+            limit=params.limit, offset=params.offset, **filters
         )
         return PaginatedResponse.make(items=messages, total=total, params=params)
 
