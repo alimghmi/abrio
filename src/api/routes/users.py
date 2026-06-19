@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, status
 
 from api.deps import get_balance_usecase, get_user_usecase
 from api.schemas.balance import BalanceIDResponse, TopUpUserBalance
+from api.schemas.pagination import PaginatedResponse, PaginationParams
 from api.schemas.users import CreateUserRequest, UserResponse
 from app.usecases.balance import BalanceUseCase
 from app.usecases.users import UserUseCase
@@ -9,9 +10,11 @@ from app.usecases.users import UserUseCase
 router = APIRouter()
 
 
-@router.get("/", status_code=status.HTTP_200_OK, response_model=list[UserResponse])
-async def get_users(usecase: UserUseCase = Depends(get_user_usecase)):
-    return usecase.get_users()
+@router.get("/", status_code=status.HTTP_200_OK, response_model=PaginatedResponse[UserResponse])
+async def get_users(
+    params: PaginationParams = Depends(), usecase: UserUseCase = Depends(get_user_usecase)
+):
+    return usecase.get_users_slice(params)
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=UserResponse)
