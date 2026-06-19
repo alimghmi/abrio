@@ -1,8 +1,12 @@
 import asyncio
 import time
 
+import pytest
+
 from api.routes.health import health_check_live
 from main import create_app
+
+pytestmark = pytest.mark.unit
 
 
 def test_health_check_live_returns_ok() -> None:

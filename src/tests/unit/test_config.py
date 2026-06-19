@@ -2,6 +2,8 @@ import pytest
 
 from core.config import Settings
 
+pytestmark = pytest.mark.unit
+
 
 def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     for env_name in (

@@ -9,12 +9,15 @@ from pydantic import ValidationError
 from api.deps import get_balance_usecase, get_user_usecase
 from api.routes import users as user_routes
 from api.schemas.balance import BalanceIDResponse, TopUpUserBalance
+from api.schemas.pagination import PaginatedResponse, PaginationParams
 from api.schemas.users import CreateUserRequest, UserResponse
 from app.usecases.balance import BalanceUseCase
 from app.usecases.users import UserUseCase
 from infra.db.models.balance import Balance
 from infra.db.models.user import User
 from tests.conftest import SessionFactory
+
+pytestmark = pytest.mark.unit
 
 
 class FakeBalance:
@@ -55,8 +58,9 @@ class FakeUserUseCase:
     def create_user(self, payload: CreateUserRequest) -> FakeUser:
         return FakeUser(name=payload.name)
 
-    def get_users(self) -> list[FakeUser]:
-        return [self.repo.user]
+    def get_users_slice(self, params: PaginationParams) -> PaginatedResponse[object]:
+        assert params.page == 1
+        return PaginatedResponse[object].make(items=[self.repo.user], total=1, params=params)
 
     def get_user(self, user_id: int) -> FakeUser:
         assert user_id == self.repo.user.id
@@ -74,10 +78,15 @@ class FakeBalanceUseCase:
 
 
 def test_get_users_route_uses_user_usecase() -> None:
-    response = asyncio.run(user_routes.get_users(cast(UserUseCase, FakeUserUseCase())))
+    response = asyncio.run(
+        user_routes.get_users(
+            params=PaginationParams(page=1, size=20),
+            usecase=cast(UserUseCase, FakeUserUseCase()),
+        )
+    )
 
-    assert len(response) == 1
-    assert response[0].name == "Ada"
+    assert response.total == 1
+    assert response.items[0].name == "Ada"
 
 
 def test_create_user_route_uses_user_usecase() -> None:
