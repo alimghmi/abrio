@@ -73,17 +73,12 @@ class MessageRepository:
     def calculate_summary(self, user_id: int) -> dict[str, int]:
         query = select(
             func.count(Message.id).label("total"),
-
             func.count(Message.id).filter(Message.status == MessageStatus.QUEUED).label("queued"),
-
             func.count(Message.id)
             .filter(Message.status == MessageStatus.DISPATCHING)
             .label("dispatching"),
-
             func.count(Message.id).filter(Message.status == MessageStatus.FAILED).label("failed"),
-
             func.count(Message.id).filter(Message.status == MessageStatus.SENT).label("sent"),
-
             func.count(Message.id)
             .filter(Message.status == MessageStatus.PERMANENT_FAILED)
             .label("permanent_failed"),
