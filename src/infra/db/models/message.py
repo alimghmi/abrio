@@ -16,6 +16,7 @@ from domain.enums import MessagePriority, MessageStatus, PaymentStatus  # type: 
 from infra.db.base import Base
 
 if TYPE_CHECKING:
+    from infra.db.models.dispatch_job import DispatchJob
     from infra.db.models.user import User
 
 
@@ -42,6 +43,13 @@ class Message(Base):
     )
 
     user: Mapped["User"] = relationship("User", back_populates="messages")
+    dispatch_job: Mapped["DispatchJob | None"] = relationship(
+        "DispatchJob",
+        back_populates="message",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
     __table_args__ = (
         CheckConstraint("updated_at >= created_at", name="check_updated_at_ge_created_at"),

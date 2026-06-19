@@ -10,6 +10,7 @@ from core.config import Settings
 from domain.errors import InsufficientBalanceError, UserNotFoundError
 from infra.db.models.message import Message
 from infra.db.repositories.balance import BalanceRepositry
+from infra.db.repositories.dispatch_jobs import DispatchJobRepository
 from infra.db.repositories.messages import MessageRepository
 
 
@@ -19,6 +20,7 @@ class MessageUseCase:
         self.settings = settings
         self._repo = MessageRepository(session)
         self._balance_repo = BalanceRepositry(session)
+        self._dispatch_repo = DispatchJobRepository(session)
 
     def get_user_messages(self, user_id: int) -> list[Message]:
         return self._repo.get_user_messages(user_id=user_id)
@@ -40,6 +42,10 @@ class MessageUseCase:
                 message = self._repo.create_message(payload=payload_dict)
                 self.session.flush()
                 self._balance_repo.reserve_credits(payload.user_id, message_cost)
+                self._dispatch_repo.create(
+                    message_id=message.id, priority=payload.priority, payload=payload.model_dump()
+                )
+
         except IntegrityError as e:
             if isinstance(e.orig, UniqueViolation):
                 return self._repo.get_user_message_by_idempotency_key(
