@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from api.schemas.messages import MessageRequest
+from api.schemas.pagination import PaginatedResponse, PaginationParams  # type: ignore
 from core.config import Settings
 from domain.errors import InsufficientBalanceError, UserNotFoundError
 from infra.db.models.message import Message
@@ -21,6 +22,12 @@ class MessageUseCase:
 
     def get_user_messages(self, user_id: int) -> list[Message]:
         return self._repo.get_user_messages(user_id=user_id)
+
+    def get_user_messages_slice(self, params: PaginationParams, **kwargs):
+        messages, total = self._repo.get_user_messages_slice(
+            limit=params.limit, offset=params.offset, **kwargs
+        )
+        return PaginatedResponse.make(items=messages, total=total, params=params)
 
     def get_user_message(self, message_id: UUID, user_id: int) -> Message:
         return self._repo.get_user_message(message_id=message_id, user_id=user_id)

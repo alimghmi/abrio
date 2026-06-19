@@ -16,6 +16,16 @@ class MessageRepository:
         query = select(Message).where(Message.user_id == user_id)
         return list(self.session.scalars(query).all())
 
+    def get_user_messages_slice(
+        self, limit: int, offset: int, **kwargs
+    ) -> tuple[list[Message], int]:
+        user_filter = Message.user_id == kwargs.get("user_id")
+        count_query = select(func.count(Message.id)).where(user_filter)
+        total_count = self.session.scalar(count_query) or 0
+        data_query = select(Message).where(user_filter).limit(limit).offset(offset)
+        messages = list(self.session.scalars(data_query).all())
+        return messages, total_count
+
     def get_user_message_by_idempotency_key(self, user_id: int, idempotency_key: UUID) -> Message:
         query = select(Message).where(
             Message.idempotency_key == idempotency_key, Message.user_id == user_id

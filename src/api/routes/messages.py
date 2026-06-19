@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, status
 
 from api.deps import get_message_usecase
 from api.schemas.messages import MessageRequest, MessageResponse, MessagesSummaryResponse
+from api.schemas.pagination import PaginatedResponse, PaginationParams
 from app.usecases.messages import MessageUseCase
 
 router = APIRouter()
@@ -16,9 +17,13 @@ async def send_message(
     return usecase.create_message(payload=payload)
 
 
-@router.get("/", status_code=status.HTTP_200_OK, response_model=list[MessageResponse])
-async def get_user_messages(user_id: int, usecase: MessageUseCase = Depends(get_message_usecase)):
-    return usecase.get_user_messages(user_id=user_id)
+@router.get("/", status_code=status.HTTP_200_OK, response_model=PaginatedResponse[MessageResponse])
+async def get_user_messages(
+    user_id: int,
+    params: PaginationParams = Depends(),
+    usecase: MessageUseCase = Depends(get_message_usecase),
+):
+    return usecase.get_user_messages_slice(params=params, user_id=user_id)
 
 
 @router.get("/summary", status_code=status.HTTP_200_OK, response_model=MessagesSummaryResponse)
