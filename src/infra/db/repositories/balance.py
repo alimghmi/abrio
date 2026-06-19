@@ -51,6 +51,9 @@ class BalanceRepositry:
     def reserve_credits(self, user_id: int, amount: int) -> Balance:
         return self._topup_user_reserved_credits(user_id=user_id, amount=amount)
 
+    def release_credits(self, user_id: int, amount: int) -> Balance:
+        return self._deduct_user_reserved_credits(user_id=user_id, amount=amount)
+
     def settle(self, user_id: int, amount: int) -> Balance:
         amount = abs(amount)
         balance = self.get_by_user_id(user_id=user_id)
