@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = False
 
+    cost_per_message: int = 1
+
     database_url: str = "postgresql+psycopg://sms_gateway:sms_gateway@localhost:5432/sms_gateway"
     db_create_all: bool = True
     db_pre_start_retries: int = 30

@@ -2,10 +2,17 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from domain.enums import MessagePriority, MessageStatus, PaymentStatus
+from domain.enums import MessagePriority, MessageStatus, PaymentStatus  # type: ignore
 from infra.db.base import Base
 
 if TYPE_CHECKING:
@@ -19,6 +26,7 @@ class Message(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     recipient: Mapped[str] = mapped_column(String(13))
     body: Mapped[str] = mapped_column(String(70))
+    cost: Mapped[int]
     priority: Mapped[MessagePriority] = mapped_column(index=True)
     idempotency_key: Mapped[UUID] = mapped_column(index=True)
     status: Mapped[MessageStatus] = mapped_column(index=True, default=MessageStatus.QUEUED)
@@ -37,5 +45,6 @@ class Message(Base):
 
     __table_args__ = (
         CheckConstraint("updated_at >= created_at", name="check_updated_at_ge_created_at"),
+        CheckConstraint("cost > 0", name="check_cost_gt_zero"),
         UniqueConstraint("user_id", "idempotency_key", name="unique_user_id_idempotency_key"),
     )

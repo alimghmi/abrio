@@ -53,6 +53,9 @@ class InsufficientBalanceError(AppError):
     status_code = status.HTTP_402_PAYMENT_REQUIRED
     code = "insufficient_balance"
 
-    def __init__(self, user_id: int):
-        super().__init__(f"User={user_id} balance insufficient to send message.")
+    def __init__(self, user_id: int, message_cost: int):
+        super().__init__(
+            f"User={user_id} balance insufficient (need {message_cost}) to send message."
+        )
         self.user_id = user_id
+        self.message_cost = message_cost

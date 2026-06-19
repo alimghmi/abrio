@@ -21,6 +21,7 @@ class MessageResponse(BaseModel):
     user_id: int
     recipient: str
     body: str
+    cost: int
     priority: MessagePriority
     idempotency_key: UUID
     status: MessageStatus
