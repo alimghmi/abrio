@@ -6,6 +6,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     String,
     UniqueConstraint,
     func,
@@ -29,7 +30,7 @@ class Message(Base):
     body: Mapped[str] = mapped_column(String(70))
     cost: Mapped[int]
     priority: Mapped[MessagePriority] = mapped_column(index=True)
-    idempotency_key: Mapped[UUID] = mapped_column(index=True)
+    idempotency_key: Mapped[UUID]
     status: Mapped[MessageStatus] = mapped_column(index=True, default=MessageStatus.QUEUED)
     payment_status: Mapped[PaymentStatus] = mapped_column(default=PaymentStatus.RESERVED)
     created_at: Mapped[datetime] = mapped_column(
@@ -55,4 +56,10 @@ class Message(Base):
         CheckConstraint("updated_at >= created_at", name="check_updated_at_ge_created_at"),
         CheckConstraint("cost > 0", name="check_cost_gt_zero"),
         UniqueConstraint("user_id", "idempotency_key", name="unique_user_id_idempotency_key"),
+        Index(
+            "ix_messages_user_status_created_at",
+            "user_id",
+            "status",
+            "created_at",
+        ),
     )
