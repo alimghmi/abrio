@@ -1,7 +1,7 @@
-from decimal import Decimal, ROUND_HALF_DOWN
+from decimal import ROUND_HALF_DOWN, Decimal
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     log_json: bool = False
 
     cost_per_message: Decimal = Decimal("1.00")
+    max_messages_per_batch: int = Field(gt=1, default=100)
 
     database_url: str = "postgresql+psycopg://sms_gateway:sms_gateway@localhost:5432/sms_gateway"
     db_create_all: bool = True
