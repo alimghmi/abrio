@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import UUID
 
 from psycopg.errors import CheckViolation, ForeignKeyViolation, UniqueViolation
@@ -13,6 +14,7 @@ from api.schemas.messages import (
 )
 from api.schemas.pagination import PaginatedResponse, PaginationParams  # type: ignore
 from core.config import Settings
+from domain.enums import MessagePriority
 from domain.errors import (
     IdempotencyConflictError,
     IdempotencyDuplicateError,
@@ -46,7 +48,7 @@ class MessageUseCase:
         return self._repo.get_user_message(message_id=message_id, user_id=user_id)
 
     def create_message(self, payload: MessageRequest) -> Message:
-        message_cost = self.settings.cost_per_message
+        message_cost = self._get_message_cost(payload)
         payload_dict = {**payload.model_dump(), "cost": message_cost}
         try:
             with self.session.begin():
@@ -82,18 +84,17 @@ class MessageUseCase:
 
     def batch_create_message(self, payload: BatchMessageRequest) -> BatchMessageResponse:
         message_pairs: list[tuple[Message, BatchMessageRequestItem]] = []
-        message_cost = self.settings.cost_per_message
-
         duplicate_idempotency_key = self._check_duplicate_idempotency_keys(payload)
         if duplicate_idempotency_key is not None:
             raise IdempotencyDuplicateError(duplicate_idempotency_key)
 
         user_id = payload.user_id
-        total_batch_cost = len(payload.messages) * message_cost
+        total_batch_cost = self._calculate_batch_message_cost(payload.messages)
 
         try:
             with self.session.begin():
                 for item in payload.messages:
+                    message_cost = self._get_message_cost(item)
                     message_dict = {
                         **item.model_dump(),
                         "cost": message_cost,
@@ -105,6 +106,7 @@ class MessageUseCase:
                 self.session.flush()
 
                 for message_instance, item in message_pairs:
+                    message_cost = self._get_message_cost(item)
                     message_dict = {
                         **item.model_dump(),
                         "cost": message_cost,
@@ -153,7 +155,22 @@ class MessageUseCase:
     def calculate_summary(self, user_id: int) -> dict[str, int]:
         return self._repo.calculate_summary(user_id=user_id)
 
-    def _check_duplicate_idempotency_keys(self, payload: BatchMessageRequest) -> UUID | None:
+    def _get_message_cost(self, message: MessageRequest | BatchMessageRequestItem) -> Decimal:
+        if message.priority == MessagePriority.NORMAL:
+            return self.settings.cost_per_message
+        elif message.priority == MessagePriority.EXPRESS:
+            return self.settings.cost_per_express_message
+        else:
+            raise ValueError(f"Invalid message priority={message.priority}")
+
+    def _calculate_batch_message_cost(self, messages: list[BatchMessageRequestItem]) -> Decimal:
+        cost = Decimal("0.00")
+        for message in messages:
+            cost += self._get_message_cost(message)
+        return cost
+
+    @staticmethod
+    def _check_duplicate_idempotency_keys(payload: BatchMessageRequest) -> UUID | None:
         seen = set()
         for message in payload.messages:
             if message.idempotency_key not in seen:

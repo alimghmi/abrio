@@ -52,6 +52,25 @@ def make_batch_request(
     )
 
 
+def make_batch_request_with_priorities(
+    *,
+    user_id: int,
+    priorities: list[MessagePriority],
+) -> BatchMessageRequest:
+    return BatchMessageRequest(
+        user_id=user_id,
+        messages=[
+            {
+                "recipient": "+989121234567",
+                "body": f"hello {priority.value} {index}",
+                "priority": priority,
+                "idempotency_key": uuid4(),
+            }
+            for index, priority in enumerate(priorities)
+        ],
+    )
+
+
 def test_message_endpoint_flow_persists_message_reserves_balance_and_creates_dispatch_job(
     db_session_factory: SessionFactory,
     seed_user: SeedUser,
@@ -64,7 +83,7 @@ def test_message_endpoint_flow_persists_message_reserves_balance_and_creates_dis
         body="hello Ada",
         priority=MessagePriority.EXPRESS,
     )
-    settings = Settings(cost_per_message=Decimal("2.00"))
+    settings = Settings(cost_per_express_message=Decimal("2.00"))
 
     with db_session_factory() as session:
         created = message_routes.send_message(payload, MessageUseCase(session, settings))
@@ -172,6 +191,60 @@ def test_batch_message_endpoint_creates_all_messages_jobs_and_reserves_total_cre
         assert all("idempotency_key" not in job.payload for job in jobs)
 
 
+def test_mixed_batch_message_endpoint_uses_priority_based_costs(
+    db_session_factory: SessionFactory,
+    seed_user: SeedUser,
+) -> None:
+    user_id = seed_user("Mixed Batch Ada", credits=10, reserved_credits=1)
+    payload = make_batch_request_with_priorities(
+        user_id=user_id,
+        priorities=[
+            MessagePriority.NORMAL,
+            MessagePriority.EXPRESS,
+            MessagePriority.NORMAL,
+        ],
+    )
+    settings = Settings(
+        cost_per_message=Decimal("1.00"),
+        cost_per_express_message=Decimal("3.00"),
+    )
+
+    with db_session_factory() as session:
+        response = message_routes.batch_send_message(payload, MessageUseCase(session, settings))
+
+        assert response.created_count == 3
+        assert [message.cost for message in response.messages] == [
+            Decimal("1.00"),
+            Decimal("3.00"),
+            Decimal("1.00"),
+        ]
+
+    with db_session_factory() as session:
+        messages = list(session.scalars(select(Message)).all())
+        jobs = list(session.scalars(select(DispatchJob)).all())
+        balance = get_balance(session, user_id)
+
+        message_cost_by_body = {message.body: message.cost for message in messages}
+        job_cost_by_body = {job.payload["body"]: job.payload["cost"] for job in jobs}
+
+        assert message_cost_by_body == {
+            "hello normal 0": Decimal("1.00"),
+            "hello express 1": Decimal("3.00"),
+            "hello normal 2": Decimal("1.00"),
+        }
+        assert balance.credits == Decimal("10.00")
+        assert balance.reserved_credits == Decimal("6.00")
+        assert balance.available_credits == Decimal("4.00")
+        assert len(jobs) == 3
+        assert {job.message_id for job in jobs} == {message.id for message in messages}
+        assert job_cost_by_body == {
+            "hello normal 0": "1.00",
+            "hello express 1": "3.00",
+            "hello normal 2": "1.00",
+        }
+        assert all("idempotency_key" not in job.payload for job in jobs)
+
+
 def test_batch_message_endpoint_rolls_back_when_total_cost_exceeds_available_balance(
     db_session_factory: SessionFactory,
     seed_user: SeedUser,
@@ -189,6 +262,34 @@ def test_batch_message_endpoint_rolls_back_when_total_cost_exceeds_available_bal
         balance = get_balance(session, user_id)
 
         assert balance.credits == Decimal("2.00")
+        assert balance.reserved_credits == Decimal("0.00")
+        assert count_rows(session, Message) == 0
+        assert count_rows(session, DispatchJob) == 0
+
+
+def test_express_message_insufficient_balance_rolls_back_without_changing_balance(
+    db_session_factory: SessionFactory,
+    seed_user: SeedUser,
+    message_request_factory: MessageRequestFactory,
+) -> None:
+    user_id = seed_user("Express Alan", credits=1, reserved_credits=0)
+
+    with db_session_factory() as session, pytest.raises(IntegrityError):
+        message_routes.send_message(
+            message_request_factory(user_id=user_id, priority=MessagePriority.EXPRESS),
+            MessageUseCase(
+                session,
+                Settings(
+                    cost_per_message=Decimal("1.00"),
+                    cost_per_express_message=Decimal("2.00"),
+                ),
+            ),
+        )
+
+    with db_session_factory() as session:
+        balance = get_balance(session, user_id)
+
+        assert balance.credits == Decimal("1.00")
         assert balance.reserved_credits == Decimal("0.00")
         assert count_rows(session, Message) == 0
         assert count_rows(session, DispatchJob) == 0

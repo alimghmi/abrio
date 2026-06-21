@@ -13,6 +13,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_JSON: ${LOG_JSON:-false}
       COST_PER_MESSAGE: ${COST_PER_MESSAGE:-1}
+      COST_PER_EXPRESS_MESSAGE: ${COST_PER_EXPRESS_MESSAGE:-1}
+      MAX_MESSAGES_PER_BATCH: ${MAX_MESSAGES_PER_BATCH:-100}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://sms_gateway:sms_gateway@postgres:5432/sms_gateway}
       DB_CREATE_ALL: ${DB_CREATE_ALL:-true}
       DB_PRE_START_RETRIES: ${DB_PRE_START_RETRIES:-30}

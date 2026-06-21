@@ -187,15 +187,17 @@ class FakeMessageRepository:
 class CountingBalanceRepository:
     def __init__(self) -> None:
         self.reserve_count = 0
+        self.reservations: list[tuple[int, Decimal]] = []
 
     def reserve_credits(self, user_id: int, amount: Decimal) -> None:
-        _ = (user_id, amount)
         self.reserve_count += 1
+        self.reservations.append((user_id, amount))
 
 
 class CountingDispatchRepository:
     def __init__(self) -> None:
         self.create_count = 0
+        self.calls: list[dict[str, Any]] = []
 
     def create(
         self,
@@ -204,8 +206,14 @@ class CountingDispatchRepository:
         priority: MessagePriority,
         payload: dict[str, Any],
     ) -> None:
-        _ = (message_id, priority, payload)
         self.create_count += 1
+        self.calls.append(
+            {
+                "message_id": message_id,
+                "priority": priority,
+                "payload": dict(payload),
+            }
+        )
 
 
 class BalanceIntegrityFailingRepository:
@@ -410,6 +418,107 @@ def test_batch_create_message_rejects_duplicate_idempotency_keys_before_db_work(
     assert exc_info.value.idempotency_id == idempotency_key
     assert session.begin_count == 0
     assert session.flush_called is False
+
+
+def test_create_message_uses_normal_message_cost(
+    message_request_factory: MessageRequestFactory,
+) -> None:
+    payload = message_request_factory(user_id=10, priority=MessagePriority.NORMAL)
+    balance_repo = CountingBalanceRepository()
+    dispatch_repo = CountingDispatchRepository()
+    usecase = MessageUseCase(
+        cast(Session, FakeSession()),
+        Settings(
+            cost_per_message=Decimal("1.25"),
+            cost_per_express_message=Decimal("4.75"),
+        ),
+    )
+    usecase._repo = cast(Any, FakeMessageRepository())
+    usecase._balance_repo = cast(Any, balance_repo)
+    usecase._dispatch_repo = cast(Any, dispatch_repo)
+
+    response = usecase.create_message(payload)
+
+    assert response.cost == Decimal("1.25")
+    assert balance_repo.reservations == [(10, Decimal("1.25"))]
+    assert dispatch_repo.calls[0]["payload"]["cost"] == Decimal("1.25")
+
+
+def test_create_message_uses_express_message_cost(
+    message_request_factory: MessageRequestFactory,
+) -> None:
+    payload = message_request_factory(user_id=11, priority=MessagePriority.EXPRESS)
+    balance_repo = CountingBalanceRepository()
+    dispatch_repo = CountingDispatchRepository()
+    usecase = MessageUseCase(
+        cast(Session, FakeSession()),
+        Settings(
+            cost_per_message=Decimal("1.25"),
+            cost_per_express_message=Decimal("4.75"),
+        ),
+    )
+    usecase._repo = cast(Any, FakeMessageRepository())
+    usecase._balance_repo = cast(Any, balance_repo)
+    usecase._dispatch_repo = cast(Any, dispatch_repo)
+
+    response = usecase.create_message(payload)
+
+    assert response.cost == Decimal("4.75")
+    assert balance_repo.reservations == [(11, Decimal("4.75"))]
+    assert dispatch_repo.calls[0]["payload"]["cost"] == Decimal("4.75")
+
+
+def test_batch_create_message_uses_priority_based_costs_for_mixed_batch() -> None:
+    payload = BatchMessageRequest(
+        user_id=12,
+        messages=[
+            {
+                "recipient": "+989121234567",
+                "body": "normal one",
+                "priority": MessagePriority.NORMAL,
+                "idempotency_key": uuid4(),
+            },
+            {
+                "recipient": "+989121234567",
+                "body": "express one",
+                "priority": MessagePriority.EXPRESS,
+                "idempotency_key": uuid4(),
+            },
+            {
+                "recipient": "+989121234567",
+                "body": "normal two",
+                "priority": MessagePriority.NORMAL,
+                "idempotency_key": uuid4(),
+            },
+        ],
+    )
+    balance_repo = CountingBalanceRepository()
+    dispatch_repo = CountingDispatchRepository()
+    usecase = MessageUseCase(
+        cast(Session, FakeSession()),
+        Settings(
+            cost_per_message=Decimal("1.00"),
+            cost_per_express_message=Decimal("3.00"),
+        ),
+    )
+    usecase._repo = cast(Any, FakeMessageRepository())
+    usecase._balance_repo = cast(Any, balance_repo)
+    usecase._dispatch_repo = cast(Any, dispatch_repo)
+
+    response = usecase.batch_create_message(payload)
+
+    assert response.created_count == 3
+    assert [message.cost for message in response.messages] == [
+        Decimal("1.00"),
+        Decimal("3.00"),
+        Decimal("1.00"),
+    ]
+    assert balance_repo.reservations == [(12, Decimal("5.00"))]
+    assert [call["payload"]["cost"] for call in dispatch_repo.calls] == [
+        Decimal("1.00"),
+        Decimal("3.00"),
+        Decimal("1.00"),
+    ]
 
 
 def test_create_message_returns_existing_message_for_postgres_unique_violation(

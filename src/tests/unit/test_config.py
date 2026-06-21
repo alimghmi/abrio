@@ -1,4 +1,7 @@
+from decimal import Decimal
+
 import pytest
+from pydantic import ValidationError
 
 from core.config import Settings
 
@@ -29,3 +32,15 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.log_json is False
     assert settings.db_create_all is True
     assert settings.celery_broker_url.startswith("amqp://")
+
+
+def test_settings_quantizes_express_message_cost() -> None:
+    settings = Settings(cost_per_express_message=Decimal("2.346"))
+
+    assert settings.cost_per_express_message == Decimal("2.35")
+
+
+@pytest.mark.parametrize("cost", [Decimal("0.00"), Decimal("-1.00")])
+def test_settings_rejects_non_positive_express_message_cost(cost: Decimal) -> None:
+    with pytest.raises(ValidationError):
+        Settings(cost_per_express_message=cost)

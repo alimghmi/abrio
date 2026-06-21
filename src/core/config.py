@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     log_json: bool = False
 
     cost_per_message: Decimal = Decimal("1.00")
+    cost_per_express_message: Decimal = Decimal("1.00")
     max_messages_per_batch: int = Field(gt=1, default=100)
 
     database_url: str = "postgresql+psycopg://sms_gateway:sms_gateway@localhost:5432/sms_gateway"
@@ -33,11 +34,13 @@ class Settings(BaseSettings):
     celery_task_always_eager: bool = False
     celery_task_eager_propagates: bool = True
 
-    @field_validator("cost_per_message")
+    @field_validator("cost_per_message", "cost_per_express_message")
     @classmethod
     def validate_cost(cls, v: Decimal) -> Decimal:
         if v <= Decimal("0"):
-            raise ValueError("cost_per_message must be greater than zero")
+            raise ValueError(
+                "cost_per_message and cost_per_express_message must be greater than zero"
+            )
 
         return v.quantize(Decimal("0.01"), rounding=ROUND_HALF_DOWN)
 
