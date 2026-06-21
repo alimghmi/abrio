@@ -1,5 +1,7 @@
+from decimal import Decimal, ROUND_HALF_DOWN
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,7 +19,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = False
 
-    cost_per_message: int = 1
+    cost_per_message: Decimal = Decimal("1.00")
 
     database_url: str = "postgresql+psycopg://sms_gateway:sms_gateway@localhost:5432/sms_gateway"
     db_create_all: bool = True
@@ -29,6 +31,14 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://localhost:6379/1"
     celery_task_always_eager: bool = False
     celery_task_eager_propagates: bool = True
+
+    @field_validator("cost_per_message")
+    @classmethod
+    def validate_cost(cls, v: Decimal) -> Decimal:
+        if v <= Decimal("0"):
+            raise ValueError("cost_per_message must be greater than zero")
+
+        return v.quantize(Decimal("0.01"), rounding=ROUND_HALF_DOWN)
 
 
 @lru_cache

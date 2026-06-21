@@ -1,7 +1,9 @@
+from decimal import Decimal
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from domain.errors import UserNotFoundError
+from domain.errors import AmountNotGreaterThanZero, UserNotFoundError
 from infra.db.models.balance import Balance
 
 
@@ -18,44 +20,60 @@ class BalanceRepositry:
 
         return balance
 
-    def _topup_user_credits(self, user_id: int, amount: int = 1) -> Balance:
-        amount = abs(amount)
+    def _topup_user_credits(self, user_id: int, amount: Decimal) -> Balance:
+        if amount <= Decimal("0"):
+            raise AmountNotGreaterThanZero(amount)
+
         balance = self.get_by_user_id(user_id=user_id)
         balance.credits += amount
         return balance
 
-    def _deduct_user_credits(self, user_id: int, amount: int = 1) -> Balance:
-        amount = abs(amount)
+    def _deduct_user_credits(self, user_id: int, amount: Decimal) -> Balance:
+        if amount <= Decimal("0"):
+            raise AmountNotGreaterThanZero(amount)
+
         balance = self.get_by_user_id(user_id=user_id)
         balance.credits -= amount
         return balance
 
-    def _topup_user_reserved_credits(self, user_id: int, amount: int = 1) -> Balance:
-        amount = abs(amount)
+    def _topup_user_reserved_credits(self, user_id: int, amount: Decimal) -> Balance:
+        if amount <= Decimal("0"):
+            raise AmountNotGreaterThanZero(amount)
+
         balance = self.get_by_user_id(user_id=user_id)
         balance.reserved_credits += amount
         return balance
 
-    def _deduct_user_reserved_credits(self, user_id: int, amount: int = 1) -> Balance:
-        amount = abs(amount)
+    def _deduct_user_reserved_credits(self, user_id: int, amount: Decimal) -> Balance:
+        if amount <= Decimal("0"):
+            raise AmountNotGreaterThanZero(amount)
+
         balance = self.get_by_user_id(user_id=user_id)
         balance.reserved_credits -= amount
         return balance
 
     def _zero_user_credits(self, user_id: int) -> Balance:
         balance = self.get_by_user_id(user_id=user_id)
-        balance.credits = 0
-        balance.reserved_credits = 0
+        balance.credits = Decimal("0.00")
+        balance.reserved_credits = Decimal("0.00")
         return balance
 
-    def reserve_credits(self, user_id: int, amount: int) -> Balance:
+    def reserve_credits(self, user_id: int, amount: Decimal) -> Balance:
+        if amount <= Decimal("0"):
+            raise AmountNotGreaterThanZero(amount)
+
         return self._topup_user_reserved_credits(user_id=user_id, amount=amount)
 
-    def release_credits(self, user_id: int, amount: int) -> Balance:
+    def release_credits(self, user_id: int, amount: Decimal) -> Balance:
+        if amount <= Decimal("0"):
+            raise AmountNotGreaterThanZero(amount)
+
         return self._deduct_user_reserved_credits(user_id=user_id, amount=amount)
 
-    def settle(self, user_id: int, amount: int) -> Balance:
-        amount = abs(amount)
+    def settle(self, user_id: int, amount: Decimal) -> Balance:
+        if amount <= Decimal("0"):
+            raise AmountNotGreaterThanZero(amount)
+
         balance = self.get_by_user_id(user_id=user_id)
         balance.reserved_credits -= amount
         balance.credits -= amount

@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -7,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Numeric,
     String,
     UniqueConstraint,
     func,
@@ -28,7 +30,7 @@ class Message(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     recipient: Mapped[str] = mapped_column(String(13))
     body: Mapped[str] = mapped_column(String(70))
-    cost: Mapped[int]
+    cost: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     priority: Mapped[MessagePriority] = mapped_column(index=True)
     idempotency_key: Mapped[UUID]
     status: Mapped[MessageStatus] = mapped_column(index=True, default=MessageStatus.QUEUED)

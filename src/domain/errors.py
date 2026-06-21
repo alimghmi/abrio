@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import status
@@ -19,6 +20,14 @@ class UserNotFoundError(AppError):
     def __init__(self, user_id: int):
         super().__init__(f"User with id={user_id} was not found.")
         self.user_id = user_id
+
+
+class AmountNotGreaterThanZero(AppError):
+    code = "amount_not_greater_than_zero"
+
+    def __init__(self, amount: Decimal):
+        super().__init__(f"Amount={amount} must be greater than zero.")
+        self.amount = amount
 
 
 class MessageNotFoundError(AppError):
@@ -53,7 +62,7 @@ class InsufficientBalanceError(AppError):
     status_code = status.HTTP_402_PAYMENT_REQUIRED
     code = "insufficient_balance"
 
-    def __init__(self, user_id: int, message_cost: int):
+    def __init__(self, user_id: int, message_cost: Decimal):
         super().__init__(
             f"User={user_id} balance insufficient (need {message_cost}) to send message."
         )

@@ -29,6 +29,6 @@ class UserRepository:
         return user
 
     def create_user(self, name) -> User:
-        new_user = User(name=name, balance=Balance(credits=0, reserved_credits=0))
+        new_user = User(name=name, balance=Balance())
         self.session.add(new_user)
         return new_user
