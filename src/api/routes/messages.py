@@ -4,7 +4,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 
 from api.deps import get_message_usecase
-from api.schemas.messages import MessageRequest, MessageResponse, MessagesSummaryResponse
+from api.schemas.messages import (
+    BatchMessageRequest,
+    BatchMessageResponse,
+    MessageRequest,
+    MessageResponse,
+    MessagesSummaryResponse,
+)
 from api.schemas.pagination import PaginatedResponse, PaginationParams
 from app.usecases.messages import MessageUseCase
 from domain.enums import MessagePriority, MessageStatus, PaymentStatus
@@ -13,10 +19,15 @@ router = APIRouter()
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=MessageResponse)
-def send_message(
-    payload: MessageRequest, usecase: MessageUseCase = Depends(get_message_usecase)
-):
+def send_message(payload: MessageRequest, usecase: MessageUseCase = Depends(get_message_usecase)):
     return usecase.create_message(payload=payload)
+
+
+@router.post("/batch", status_code=status.HTTP_201_CREATED, response_model=BatchMessageResponse)
+def batch_send_message(
+    payload: BatchMessageRequest, usecase: MessageUseCase = Depends(get_message_usecase)
+):
+    return usecase.batch_create_message(payload=payload)
 
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=PaginatedResponse[MessageResponse])
@@ -46,9 +57,7 @@ def get_messages(
 
 
 @router.get("/summary", status_code=status.HTTP_200_OK, response_model=MessagesSummaryResponse)
-def get_user_messages_summary(
-    user_id: int, usecase: MessageUseCase = Depends(get_message_usecase)
-):
+def get_user_messages_summary(user_id: int, usecase: MessageUseCase = Depends(get_message_usecase)):
     return usecase.calculate_summary(user_id=user_id)
 
 

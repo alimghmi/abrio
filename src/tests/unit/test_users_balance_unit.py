@@ -1,5 +1,5 @@
-import asyncio
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import cast
 
 import pytest
@@ -24,8 +24,8 @@ class FakeBalance:
     def __init__(
         self,
         *,
-        credits: int = 10,
-        reserved_credits: int = 3,
+        credits: Decimal = Decimal("10.00"),
+        reserved_credits: Decimal = Decimal("3.00"),
         user_id: int = 1,
     ) -> None:
         self.user_id = user_id
@@ -34,7 +34,7 @@ class FakeBalance:
         self.updated_at = datetime.now(UTC)
 
     @property
-    def available_credits(self) -> int:
+    def available_credits(self) -> Decimal:
         return self.credits - self.reserved_credits
 
 
@@ -68,7 +68,7 @@ class FakeUserUseCase:
 
 
 class FakeBalanceUseCase:
-    def topup_user_credits(self, *, user_id: int, credit_amount: int) -> FakeBalance:
+    def topup_user_credits(self, *, user_id: int, credit_amount: Decimal) -> FakeBalance:
         assert user_id == 1
         return FakeBalance(credits=credit_amount, reserved_credits=0, user_id=user_id)
 
@@ -78,11 +78,9 @@ class FakeBalanceUseCase:
 
 
 def test_get_users_route_uses_user_usecase() -> None:
-    response = asyncio.run(
-        user_routes.get_users(
-            params=PaginationParams(page=1, size=20),
-            usecase=cast(UserUseCase, FakeUserUseCase()),
-        )
+    response = user_routes.get_users(
+        params=PaginationParams(page=1, size=20),
+        usecase=cast(UserUseCase, FakeUserUseCase()),
     )
 
     assert response.total == 1
@@ -90,43 +88,37 @@ def test_get_users_route_uses_user_usecase() -> None:
 
 
 def test_create_user_route_uses_user_usecase() -> None:
-    response = asyncio.run(
-        user_routes.create_user(
-            CreateUserRequest(name="Grace"),
-            cast(UserUseCase, FakeUserUseCase()),
-        )
+    response = user_routes.create_user(
+        CreateUserRequest(name="Grace"),
+        cast(UserUseCase, FakeUserUseCase()),
     )
 
     assert response.name == "Grace"
 
 
 def test_get_user_route_uses_user_usecase() -> None:
-    response = asyncio.run(user_routes.get_user(1, cast(UserUseCase, FakeUserUseCase())))
+    response = user_routes.get_user(1, cast(UserUseCase, FakeUserUseCase()))
 
     assert response.id == 1
-    assert response.balance.available_credits == 7
+    assert response.balance.available_credits == Decimal("7.00")
 
 
 def test_topup_route_uses_balance_usecase() -> None:
-    response = asyncio.run(
-        user_routes.topup_user_balance(
-            1,
-            TopUpUserBalance(credit_amount=25),
-            cast(BalanceUseCase, FakeBalanceUseCase()),
-        )
+    response = user_routes.topup_user_balance(
+        1,
+        TopUpUserBalance(credit_amount=Decimal("25.00")),
+        cast(BalanceUseCase, FakeBalanceUseCase()),
     )
 
-    assert response.credits == 25
-    assert response.available_credits == 25
+    assert response.credits == Decimal("25.00")
+    assert response.available_credits == Decimal("25.00")
 
 
 def test_zero_route_uses_balance_usecase() -> None:
-    response = asyncio.run(
-        user_routes.zero_user_balance(1, cast(BalanceUseCase, FakeBalanceUseCase()))
-    )
+    response = user_routes.zero_user_balance(1, cast(BalanceUseCase, FakeBalanceUseCase()))
 
-    assert response.credits == 0
-    assert response.reserved_credits == 0
+    assert response.credits == Decimal("0.00")
+    assert response.reserved_credits == Decimal("0.00")
 
 
 def test_create_user_request_rejects_invalid_names() -> None:
@@ -150,14 +142,14 @@ def test_user_response_validates_orm_like_object() -> None:
 
     assert response.name == "Ada"
     assert response.balance is not None
-    assert response.balance.available_credits == 7
+    assert response.balance.available_credits == Decimal("7.00")
 
 
 def test_balance_id_response_validates_orm_like_object() -> None:
     response = BalanceIDResponse.model_validate(FakeBalance())
 
     assert response.user_id == 1
-    assert response.available_credits == 7
+    assert response.available_credits == Decimal("7.00")
 
 
 def test_user_routes_are_registered() -> None:
@@ -179,9 +171,9 @@ def test_dependency_factories_create_usecases(db_session_factory: SessionFactory
 
 
 def test_balance_available_credits_property() -> None:
-    balance = Balance(credits=12, reserved_credits=5)
+    balance = Balance(credits=Decimal("12.00"), reserved_credits=Decimal("5.00"))
 
-    assert balance.available_credits == 7
+    assert balance.available_credits == Decimal("7.00")
 
 
 def test_user_model_accepts_optional_balance() -> None:

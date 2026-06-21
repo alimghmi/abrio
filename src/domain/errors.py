@@ -22,8 +22,8 @@ class UserNotFoundError(AppError):
         self.user_id = user_id
 
 
-class AmountNotGreaterThanZero(AppError):
-    code = "amount_not_greater_than_zero"
+class InvalidAmountValueError(AppError):
+    code = "invalid_amount_value"
 
     def __init__(self, amount: Decimal):
         super().__init__(f"Amount={amount} must be greater than zero.")
@@ -50,12 +50,24 @@ class MessageNotFoundError(AppError):
 class IdempotencyConflictError(AppError):
     code = "idempotency_conflict"
 
-    def __init__(self, idempotency_id: UUID, extra: str = ""):
-        if extra:
-            extra = f" {extra}"
-        super().__init__(f"Idempotency key={idempotency_id}{extra} conflict.")
+    def __init__(self, idempotency_id: UUID | None = None, extra: str | None = None):
+        extra_message = ""
+        if idempotency_id is not None:
+            extra_message += f"={idempotency_id}"
+        if extra is not None:
+            extra_message += f" {extra}"
+
+        super().__init__(f"Idempotency key{extra_message} conflict.")
         self.idempotency_id = idempotency_id
         self.extra = extra
+
+
+class IdempotencyDuplicateError(AppError):
+    code = "idempotency_duplicate"
+
+    def __init__(self, idempotency_id: UUID):
+        super().__init__(f"Batch request idempotency key={idempotency_id} duplicate.")
+        self.idempotency_id = idempotency_id
 
 
 class InsufficientBalanceError(AppError):

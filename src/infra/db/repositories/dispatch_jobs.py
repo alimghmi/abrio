@@ -13,7 +13,9 @@ class DispatchJobRepository:
 
     def create(self, message_id: UUID, priority: MessagePriority, payload: dict[str, Any]):
         payload["message_id"] = str(message_id)
+        payload["cost"] = str(payload["cost"])
         del payload["idempotency_key"]
+
         job = DispatchJob(message_id=message_id, priority=priority, payload=payload)
         self.session.add(job)
         return job
