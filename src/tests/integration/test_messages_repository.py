@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
@@ -212,7 +213,7 @@ def test_dispatch_job_repository_create_shapes_payload(
     user_id = seed_user("Ada", credits=3, reserved_credits=0)
     message_id = seed_message(user_id=user_id)
     request = message_request_factory(user_id=user_id, priority=MessagePriority.EXPRESS)
-    payload = request.model_dump()
+    payload = {**request.model_dump(), "cost": Decimal("1.00")}
 
     with db_session_factory() as session:
         job = DispatchJobRepository(session).create(
@@ -235,4 +236,5 @@ def test_dispatch_job_repository_create_shapes_payload(
         assert persisted.payload["message_id"] == str(message_id)
         assert persisted.payload["user_id"] == user_id
         assert persisted.payload["priority"] == MessagePriority.EXPRESS
+        assert persisted.payload["cost"] == "1.00"
         assert "idempotency_key" not in persisted.payload
