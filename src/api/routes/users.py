@@ -6,8 +6,10 @@ from api.schemas.pagination import PaginatedResponse, PaginationParams
 from api.schemas.users import CreateUserRequest, UserResponse
 from app.usecases.balance import BalanceUseCase
 from app.usecases.users import UserUseCase
+from core.config import get_settings
 
 router = APIRouter()
+settings = get_settings()
 
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=PaginatedResponse[UserResponse])
@@ -36,9 +38,13 @@ def topup_user_balance(
     return usecase.topup_user_credits(user_id=user_id, credit_amount=payload.credit_amount)
 
 
-@router.post("/{user_id}/zero", status_code=status.HTTP_200_OK, response_model=BalanceIDResponse)
-def zero_user_balance(
-    user_id: int,
-    usecase: BalanceUseCase = Depends(get_balance_usecase),
-):
-    return usecase.zero_user_credits(user_id=user_id)
+if settings.app_debug:
+
+    @router.post(
+        "/{user_id}/zero", status_code=status.HTTP_200_OK, response_model=BalanceIDResponse
+    )
+    def zero_user_balance(
+        user_id: int,
+        usecase: BalanceUseCase = Depends(get_balance_usecase),
+    ):
+        return usecase.zero_user_credits(user_id=user_id)
