@@ -54,7 +54,7 @@ class MessageUseCase:
                 message = self._repo.create_message(payload=payload_dict)
                 self.session.flush()
                 self._dispatch_repo.create(
-                    message_id=message.id, priority=payload.priority, payload=payload.model_dump()
+                    message_id=message.id, priority=payload.priority, payload=payload_dict
                 )
         except IntegrityError as e:
             constraint_name = getattr(
