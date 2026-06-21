@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, format, and type check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.23"
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --dev
+
+      - name: Check formatting
+        run: uv run ruff format --check src
+
+      - name: Run Ruff
+        run: uv run ruff check src
+
+      # Enable this after resolving current mypy errors.
+      # - name: Run mypy
+      #   run: uv run mypy src --exclude '^src/tests/'
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      APP_NAME: sms-gateway
+      APP_ENV: test
+      APP_DEBUG: "false"
+      API_PREFIX: /api
+      LOG_LEVEL: INFO
+      LOG_JSON: "false"
+
+      COST_PER_MESSAGE: "1"
+      COST_PER_EXPRESS_MESSAGE: "1"
+      MAX_MESSAGES_PER_BATCH: "100"
+
+      DATABASE_URL: postgresql+psycopg://sms_gateway:sms_gateway@localhost:5432/sms_gateway
+      DB_CREATE_ALL: "true"
+      DB_PRE_START_RETRIES: "30"
+      DB_PRE_START_INTERVAL_SECONDS: "1"
+
+      REDIS_URL: redis://localhost:6379/0
+
+      CELERY_BROKER_URL: amqp://guest:guest@localhost:5672//
+      CELERY_RESULT_BACKEND: redis://localhost:6379/1
+      CELERY_TASK_ALWAYS_EAGER: "false"
+      CELERY_TASK_EAGER_PROPAGATES: "true"
+
+      POSTGRES_DB: sms_gateway
+      POSTGRES_USER: sms_gateway
+      POSTGRES_PASSWORD: sms_gateway
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: sms_gateway
+          POSTGRES_USER: sms_gateway
+          POSTGRES_PASSWORD: sms_gateway
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sms_gateway -d sms_gateway"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      rabbitmq:
+        image: rabbitmq:3.13-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: guest
+          RABBITMQ_DEFAULT_PASS: guest
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.23"
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --dev
+
+      - name: Run tests
+        run: uv run pytest --cov-report=term-missing --cov-report=xml
