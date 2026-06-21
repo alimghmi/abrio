@@ -26,7 +26,7 @@ def _get_host_and_port(redis_url: str) -> tuple:
 
 
 def _check_redis(redis_url: str, timeout: int) -> ServiceStatus:
-    start_time = time.time()
+    start_time = time.perf_counter()
     try:
         host, port = _get_host_and_port(redis_url)
         r = redis.Redis(host=host, port=port, socket_connect_timeout=timeout)
@@ -38,20 +38,20 @@ def _check_redis(redis_url: str, timeout: int) -> ServiceStatus:
     except Exception as e:
         status, error = "error", f"Redis connection failed: {e!s}"
 
-    duration_ms = (time.time() - start_time) * 1000
+    duration_ms = (time.perf_counter() - start_time) * 1000
     return ServiceStatus(status=status, duration_ms=duration_ms, error=error)
 
 
 def _check_db(engine) -> ServiceStatus:
     try:
-        start_time = time.time()
+        start_time = time.perf_counter()
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
         status, error = "ok", None
     except SQLAlchemyError as exc:
         status, error = "error", f"Database connection failed: {exc!s}"
 
-    duration_ms = (time.time() - start_time) * 1000
+    duration_ms = (time.perf_counter() - start_time) * 1000
     return ServiceStatus(status=status, duration_ms=duration_ms, error=error)
 
 
