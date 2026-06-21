@@ -18,6 +18,10 @@ from infra.db.models.user import User
 from tests.conftest import SessionFactory
 
 pytestmark = pytest.mark.unit
+requires_debug = pytest.mark.skipif(
+    not user_routes.settings.app_debug,
+    reason="requires APP_DEBUG=true",
+)
 
 
 class FakeBalance:
@@ -114,6 +118,7 @@ def test_topup_route_uses_balance_usecase() -> None:
     assert response.available_credits == Decimal("25.00")
 
 
+@requires_debug
 def test_zero_route_uses_balance_usecase() -> None:
     response = user_routes.zero_user_balance(1, cast(BalanceUseCase, FakeBalanceUseCase()))
 
@@ -158,6 +163,12 @@ def test_user_routes_are_registered() -> None:
     assert "/" in route_paths
     assert "/{user_id}" in route_paths
     assert "/{user_id}/topup" in route_paths
+
+
+@requires_debug
+def test_zero_user_route_is_registered_when_debug_enabled() -> None:
+    route_paths = {route.path for route in user_routes.router.routes if isinstance(route, APIRoute)}
+
     assert "/{user_id}/zero" in route_paths
 
 

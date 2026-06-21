@@ -13,6 +13,10 @@ from main import create_app
 from tests.conftest import SessionFactory
 
 pytestmark = pytest.mark.integration
+requires_debug = pytest.mark.skipif(
+    not user_routes.settings.app_debug,
+    reason="requires APP_DEBUG=true",
+)
 
 
 def test_users_balance_endpoint_flow(db_session_factory: SessionFactory) -> None:
@@ -57,6 +61,23 @@ def test_users_balance_endpoint_flow(db_session_factory: SessionFactory) -> None
         assert topped_up.credits == Decimal("25.00")
         assert topped_up.available_credits == Decimal("25.00")
 
+
+@requires_debug
+def test_zero_user_balance_endpoint_flow(db_session_factory: SessionFactory) -> None:
+    with db_session_factory() as session:
+        created = user_routes.create_user(
+            CreateUserRequest(name="Ada"),
+            UserUseCase(session),
+        )
+        user_id = created.id
+
+    with db_session_factory() as session:
+        user_routes.topup_user_balance(
+            user_id,
+            TopUpUserBalance(credit_amount=Decimal("25.00")),
+            BalanceUseCase(session),
+        )
+
     with db_session_factory() as session:
         zeroed = user_routes.zero_user_balance(user_id, BalanceUseCase(session))
 
@@ -84,6 +105,7 @@ def test_topup_endpoint_raises_for_missing_user(db_session_factory: SessionFacto
     assert exc_info.value.user_id == 999
 
 
+@requires_debug
 def test_zero_endpoint_raises_for_missing_user(db_session_factory: SessionFactory) -> None:
     with db_session_factory() as session, pytest.raises(UserNotFoundError) as exc_info:
         user_routes.zero_user_balance(999, BalanceUseCase(session))
@@ -98,4 +120,11 @@ def test_user_routes_are_registered_in_app() -> None:
     assert "/api/v1/users/" in route_paths
     assert "/api/v1/users/{user_id}" in route_paths
     assert "/api/v1/users/{user_id}/topup" in route_paths
+
+
+@requires_debug
+def test_zero_user_route_is_registered_in_app_when_debug_enabled() -> None:
+    app = create_app()
+    route_paths = set(app.openapi()["paths"])
+
     assert "/api/v1/users/{user_id}/zero" in route_paths
