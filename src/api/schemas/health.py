@@ -20,4 +20,5 @@ class HealthReadyResponse(BaseModel):
     service: str
     redis: ServiceStatus
     database: ServiceStatus
+    rabbitmq: ServiceStatus
     timestamp: float
