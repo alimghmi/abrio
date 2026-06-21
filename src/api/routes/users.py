@@ -11,24 +11,24 @@ router = APIRouter()
 
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=PaginatedResponse[UserResponse])
-async def get_users(
+def get_users(
     params: PaginationParams = Depends(), usecase: UserUseCase = Depends(get_user_usecase)
 ):
     return usecase.get_users_slice(params)
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=UserResponse)
-async def create_user(payload: CreateUserRequest, usecase: UserUseCase = Depends(get_user_usecase)):
+def create_user(payload: CreateUserRequest, usecase: UserUseCase = Depends(get_user_usecase)):
     return usecase.create_user(payload)
 
 
 @router.get("/{user_id}", status_code=status.HTTP_200_OK, response_model=UserResponse)
-async def get_user(user_id: int, usecase: UserUseCase = Depends(get_user_usecase)):
+def get_user(user_id: int, usecase: UserUseCase = Depends(get_user_usecase)):
     return usecase.get_user(user_id=user_id)
 
 
 @router.post("/{user_id}/topup", status_code=status.HTTP_200_OK, response_model=BalanceIDResponse)
-async def topup_user_balance(
+def topup_user_balance(
     user_id: int,
     payload: TopUpUserBalance,
     usecase: BalanceUseCase = Depends(get_balance_usecase),
@@ -37,7 +37,7 @@ async def topup_user_balance(
 
 
 @router.post("/{user_id}/zero", status_code=status.HTTP_200_OK, response_model=BalanceIDResponse)
-async def zero_user_balance(
+def zero_user_balance(
     user_id: int,
     usecase: BalanceUseCase = Depends(get_balance_usecase),
 ):

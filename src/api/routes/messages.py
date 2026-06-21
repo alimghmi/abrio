@@ -13,14 +13,14 @@ router = APIRouter()
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED, response_model=MessageResponse)
-async def send_message(
+def send_message(
     payload: MessageRequest, usecase: MessageUseCase = Depends(get_message_usecase)
 ):
     return usecase.create_message(payload=payload)
 
 
 @router.get("/", status_code=status.HTTP_200_OK, response_model=PaginatedResponse[MessageResponse])
-async def get_messages(
+def get_messages(
     user_id: int | None = None,
     status: MessageStatus | None = None,
     priority: MessagePriority | None = None,
@@ -46,14 +46,14 @@ async def get_messages(
 
 
 @router.get("/summary", status_code=status.HTTP_200_OK, response_model=MessagesSummaryResponse)
-async def get_user_messages_summary(
+def get_user_messages_summary(
     user_id: int, usecase: MessageUseCase = Depends(get_message_usecase)
 ):
     return usecase.calculate_summary(user_id=user_id)
 
 
 @router.get("/{message_id}", status_code=status.HTTP_200_OK, response_model=MessageResponse)
-async def get_message_by_id(
+def get_message_by_id(
     message_id: UUID, user_id: int, usecase: MessageUseCase = Depends(get_message_usecase)
 ):
     return usecase.get_user_message(message_id=message_id, user_id=user_id)
