@@ -7,7 +7,6 @@ from sqlalchemy import select
 from domain.enums import MessagePriority, MessageStatus, PaymentStatus
 from domain.errors import MessageNotFoundError
 from infra.db.models.dispatch_job import DispatchJob
-from infra.db.models.message import Message
 from infra.db.repositories.dispatch_jobs import DispatchJobRepository
 from infra.db.repositories.messages import MessageRepository
 from tests.conftest import MessageRequestFactory, SeedMessage, SeedUser, SessionFactory
