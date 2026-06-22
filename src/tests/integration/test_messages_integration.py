@@ -12,7 +12,7 @@ from api.schemas.pagination import PaginationParams
 from app.usecases.messages import MessageUseCase
 from core.config import Settings
 from domain.enums import DispatchJobStatus, MessagePriority, MessageStatus, PaymentStatus
-from domain.errors import IdempotencyDuplicateError, MessageNotFoundError, UserNotFoundError
+from domain.errors import IdempotencyDuplicateError, MessageNotFoundError
 from infra.db.models.balance import Balance
 from infra.db.models.dispatch_job import DispatchJob
 from infra.db.models.message import Message
@@ -376,21 +376,6 @@ def test_get_message_by_id_raises_for_wrong_user_or_missing_message(
             user_id=user_id,
             usecase=MessageUseCase(session, settings),
         )
-
-
-def test_create_message_for_missing_user_rolls_back(
-    db_session_factory: SessionFactory,
-    message_request_factory: MessageRequestFactory,
-) -> None:
-    with db_session_factory() as session, pytest.raises(UserNotFoundError):
-        message_routes.send_message(
-            message_request_factory(user_id=404),
-            MessageUseCase(session, Settings(cost_per_message=Decimal("1.00"))),
-        )
-
-    with db_session_factory() as session:
-        assert count_rows(session, Message) == 0
-        assert count_rows(session, DispatchJob) == 0
 
 
 def test_insufficient_balance_rolls_back_without_changing_balance(

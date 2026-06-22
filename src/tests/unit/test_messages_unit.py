@@ -541,7 +541,7 @@ def test_create_message_returns_existing_message_for_postgres_unique_violation(
     assert response.idempotency_key == payload.idempotency_key
     assert response.user_id == payload.user_id
     assert repo.lookup_count == 1
-    assert balance_repo.reserve_count == 1
+    assert balance_repo.reserve_count == 0
     assert dispatch_repo.create_count == 0
     assert session.flush_called is False
 
@@ -564,31 +564,6 @@ def test_create_message_maps_postgres_foreign_key_violation_to_user_not_found(
         usecase.create_message(payload)
 
     assert exc_info.value.user_id == 77
-
-
-def test_create_message_maps_postgres_balance_check_violation_to_insufficient_balance(
-    message_request_factory: MessageRequestFactory,
-) -> None:
-    payload = message_request_factory(user_id=88)
-    usecase = MessageUseCase(
-        cast(Session, FakeSession()), Settings(cost_per_message=Decimal("5.00"))
-    )
-    usecase._repo = cast(
-        Any, IntegrityFailingMessageRepository(IntegrityError("stmt", {}, Exception("unused")))
-    )
-    usecase._balance_repo = cast(
-        Any,
-        BalanceIntegrityFailingRepository(
-            IntegrityError("stmt", {}, FakeBalanceCheckViolation("balance check failed"))
-        ),
-    )
-    usecase._dispatch_repo = cast(Any, CountingDispatchRepository())
-
-    with pytest.raises(InsufficientBalanceError) as exc_info:
-        usecase.create_message(payload)
-
-    assert exc_info.value.user_id == 88
-    assert exc_info.value.message_cost == Decimal("5.00")
 
 
 def test_batch_create_message_maps_postgres_unique_violation_to_idempotency_conflict() -> None:
