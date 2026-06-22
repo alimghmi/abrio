@@ -1,11 +1,14 @@
 import random
-from uuid import UUID
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
 
 from core.logging import get_logger
 from domain.enums import (
     DispatchJobStatus,
+    MessagePriority,
     PaymentStatus,
 )
 from infra.db.repositories.balance import BalanceRepositry
@@ -13,6 +16,7 @@ from infra.db.repositories.dispatch_jobs import DispatchJobRepository
 from infra.db.repositories.messages import MessageRepository
 from infra.providers.types import (
     ProviderOutcome,
+    ProviderResult,
     SmsProvider,
 )
 
@@ -21,7 +25,18 @@ TERMINAL_JOB_STATUSES = {
     DispatchJobStatus.FAILED,
 }
 
+# How long a worker's delivery lease is honoured before the reaper assumes the
+# worker died mid-delivery and returns the job to RETRY.
+WORKER_LEASE_SECONDS = 120
+
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class _DeliveryContext:
+    message_id: UUID
+    recipient: str
+    body: str
 
 
 class DispatchUseCase:
@@ -31,82 +46,96 @@ class DispatchUseCase:
         provider: SmsProvider,
         *,
         max_delivery_attempts: int = 5,
+        express_ttl_seconds: int | None = None,
+        worker_lease_seconds: int = WORKER_LEASE_SECONDS,
     ):
         self.session = session
         self.provider = provider
         self.max_delivery_attempts = max_delivery_attempts
-
+        self.express_ttl_seconds = express_ttl_seconds
+        self.worker_lease_seconds = worker_lease_seconds
         self._job_repo = DispatchJobRepository(session)
         self._message_repo = MessageRepository(session)
         self._balance_repo = BalanceRepositry(session)
 
     def process(self, job_id: UUID) -> None:
+        """
+          1. claim_for_delivery  - short txn: lock, validate, mark DISPATCHING.
+          2. provider.send       - no transaction, no locks held.
+          3. record_outcome      - short txn: re-lock, persist the result.
+
+        A per-call ``worker_id`` lease makes concurrent duplicate deliveries
+        safe: phase 1 skips a job already leased, and phase 3 only writes if it
+        still owns the lease.
+        """
+        worker_id = uuid4().hex
+
         logger.debug(
             "dispatch_usecase_processing_started",
             extra={
                 "dispatch_job_id": str(job_id),
+                "worker_id": worker_id,
                 "max_delivery_attempts": self.max_delivery_attempts,
             },
         )
 
+        delivery = self._claim_for_delivery(job_id, worker_id)
+        if delivery is None:
+            return
+
+        logger.debug(
+            "dispatch_provider_send_started",
+            extra={"dispatch_job_id": str(job_id), "message_id": str(delivery.message_id)},
+        )
+        result = self.provider.send(
+            message_id=delivery.message_id,
+            recipient=delivery.recipient,
+            body=delivery.body,
+        )
+        logger.debug(
+            "dispatch_provider_response_received",
+            extra={
+                "dispatch_job_id": str(job_id),
+                "message_id": str(delivery.message_id),
+                "provider_outcome": result.outcome.value,
+                "provider_message_id": result.provider_message_id,
+                "error": result.error,
+            },
+        )
+
+        self._record_outcome(job_id, worker_id, result)
+
+    def _claim_for_delivery(self, job_id: UUID, worker_id: str) -> _DeliveryContext | None:
+        """P1: validate the job and claim it for delivery by
+        moving it to DISPATCHING with a worker lease. Returns the snapshot the
+        provider call needs, or None if there is nothing to deliver (duplicate,
+        already terminal, not processable, or finalised here as expired)."""
         with self.session.begin():
             job = self._job_repo.get_for_update(job_id)
 
             if job is None:
-                logger.debug(
-                    "dispatch_job_not_found",
-                    extra={"dispatch_job_id": str(job_id)},
-                )
-                return
+                logger.debug("dispatch_job_not_found", extra={"dispatch_job_id": str(job_id)})
+                return None
 
             if job.status in TERMINAL_JOB_STATUSES:
-                # Duplicate Celery delivery after final processing.
                 logger.debug(
                     "dispatch_job_duplicate_delivery_ignored",
-                    extra={
-                        "dispatch_job_id": str(job.id),
-                        "status": job.status.value,
-                        "retry_count": job.retry_count,
-                    },
+                    extra={"dispatch_job_id": str(job.id), "status": job.status.value},
                 )
-                return
+                return None
 
-            publish_in_progress = (
-                job.status
-                in {
-                    DispatchJobStatus.PENDING,
-                    DispatchJobStatus.RETRY,
-                }
-                and job.locked_at is not None
-                and job.locked_by is not None
-            )
-
-            is_processable = job.status == DispatchJobStatus.PUBLISHED or publish_in_progress
-
-            if not is_processable:
-                logger.info(
-                    "dispatch_job_not_processable",
-                    extra={
-                        "dispatch_job_id": str(job.id),
-                        "status": job.status.value,
-                        "locked_by": job.locked_by,
-                        "retry_count": job.retry_count,
-                    },
-                )
-                return
+            if not self._is_claimable(job, worker_id):
+                return None
 
             message = self._message_repo.get_for_update(job.message_id)
 
             if message.payment_status != PaymentStatus.RESERVED:
-                # A non-terminal job with a non-reserved payment is an
-                # inconsistent state and should not modify the balance.
-                logger.warning(
+                logger.error(
                     "dispatch_job_payment_not_reserved",
                     extra={
                         "dispatch_job_id": str(job.id),
                         "message_id": str(message.id),
                         "status": job.status.value,
-                        "retry_count": job.retry_count,
                         "payment_status": message.payment_status.value,
                     },
                 )
@@ -117,70 +146,106 @@ class DispatchUseCase:
                     f"payment_status={message.payment_status}"
                 )
 
+            if self._express_deadline_exceeded(message):
+                self._permanently_fail(
+                    job=job, message=message, error="Express delivery deadline exceeded"
+                )
+                logger.warning(
+                    "dispatch_job_express_deadline_exceeded",
+                    extra={
+                        "dispatch_job_id": str(job.id),
+                        "message_id": str(message.id),
+                        "delivery_attempts": job.delivery_attempts,
+                        "express_ttl_seconds": self.express_ttl_seconds,
+                    },
+                )
+                return None
+
             self._message_repo.mark_dispatching(message)
+            self._job_repo.mark_dispatching(job, worker_id=worker_id)
 
-            logger.debug(
-                "dispatch_provider_send_started",
-                extra={
-                    "dispatch_job_id": str(job.id),
-                    "message_id": str(message.id),
-                    "status": job.status.value,
-                    "retry_count": job.retry_count,
-                },
-            )
-
-            result = self.provider.send(
+            return _DeliveryContext(
                 message_id=message.id,
                 recipient=message.recipient,
                 body=message.body,
             )
 
-            logger.debug(
-                "dispatch_provider_response_received",
-                extra={
-                    "dispatch_job_id": str(job.id),
-                    "message_id": str(message.id),
-                    "status": job.status.value,
-                    "retry_count": job.retry_count,
-                    "provider_outcome": result.outcome.value,
-                    "provider_message_id": result.provider_message_id,
-                    "error": result.error,
-                },
+    def _is_claimable(self, job, worker_id: str) -> bool:
+        now = datetime.now(UTC)
+        if job.status == DispatchJobStatus.DISPATCHING:
+            lease_fresh = job.locked_at is not None and job.locked_at > now - timedelta(
+                seconds=self.worker_lease_seconds
             )
+            if lease_fresh:
+                # Another worker is actively delivering this job.
+                logger.info(
+                    "dispatch_job_in_flight_duplicate_ignored",
+                    extra={
+                        "dispatch_job_id": str(job.id),
+                        "worker_id": worker_id,
+                        "locked_by": job.locked_by,
+                    },
+                )
+                return False
+            # Stale lease: the previous worker died mid-delivery, reclaim it.
+            return True
+
+        publish_in_progress = (
+            job.status in {DispatchJobStatus.PENDING, DispatchJobStatus.RETRY}
+            and job.locked_at is not None
+            and job.locked_by is not None
+        )
+        if job.status == DispatchJobStatus.PUBLISHED or publish_in_progress:
+            return True
+
+        logger.info(
+            "dispatch_job_not_processable",
+            extra={
+                "dispatch_job_id": str(job.id),
+                "status": job.status.value,
+                "locked_by": job.locked_by,
+            },
+        )
+        return False
+
+    def _record_outcome(self, job_id: UUID, worker_id: str, result: ProviderResult) -> None:
+        """P3: persist the provider result, but only if we still
+        own the delivery lease taken in phase 1. If a reaper reclaimed the job or
+        another worker took over (lease lost), bail without writing so we never
+        double-record an outcome."""
+        with self.session.begin():
+            job = self._job_repo.get_for_update(job_id)
+
+            if (
+                job is None
+                or job.status != DispatchJobStatus.DISPATCHING
+                or (job.locked_by != worker_id)
+            ):
+                logger.warning(
+                    "dispatch_job_delivery_lease_lost",
+                    extra={
+                        "dispatch_job_id": str(job_id),
+                        "worker_id": worker_id,
+                        "status": job.status.value if job else None,
+                        "locked_by": job.locked_by if job else None,
+                    },
+                )
+                return
+
+            message = self._message_repo.get_for_update(job.message_id)
 
             if result.outcome == ProviderOutcome.SUCCESS:
                 if result.provider_message_id is None:
-                    logger.warning(
-                        "dispatch_provider_success_missing_message_id",
-                        extra={
-                            "dispatch_job_id": str(job.id),
-                            "message_id": str(message.id),
-                            "status": job.status.value,
-                            "retry_count": job.retry_count,
-                            "provider_outcome": result.outcome.value,
-                        },
-                    )
                     raise RuntimeError("Successful provider result has no provider message ID")
 
-                self._balance_repo.settle(
-                    user_id=message.user_id,
-                    amount=message.cost,
-                )
-
+                self._balance_repo.settle(user_id=message.user_id, amount=message.cost)
                 self._message_repo.mark_sent(message)
-
-                self._job_repo.mark_completed(
-                    job,
-                    provider_message_id=result.provider_message_id,
-                )
+                self._job_repo.mark_completed(job, provider_message_id=result.provider_message_id)
                 logger.info(
                     "dispatch_job_completed",
                     extra={
                         "dispatch_job_id": str(job.id),
                         "message_id": str(message.id),
-                        "status": job.status.value,
-                        "retry_count": job.retry_count,
-                        "provider_outcome": result.outcome.value,
                         "provider_message_id": result.provider_message_id,
                     },
                 )
@@ -188,69 +253,68 @@ class DispatchUseCase:
 
             if result.outcome == ProviderOutcome.PERMANENT_FAILURE:
                 error = result.error or "Permanent provider failure"
-                self._permanently_fail(
-                    job=job,
-                    message=message,
-                    error=error,
-                )
+                self._permanently_fail(job=job, message=message, error=error)
                 logger.warning(
                     "dispatch_job_permanently_failed",
                     extra={
                         "dispatch_job_id": str(job.id),
                         "message_id": str(message.id),
-                        "status": job.status.value,
-                        "retry_count": job.retry_count,
-                        "provider_outcome": result.outcome.value,
                         "error": error,
                     },
                 )
                 return
 
-            next_attempt = job.retry_count + 1
+            next_attempt = job.delivery_attempts + 1
 
             if next_attempt >= self.max_delivery_attempts:
                 error = result.error or "Maximum delivery attempts reached"
-                self._permanently_fail(
-                    job=job,
-                    message=message,
-                    error=error,
-                )
+                self._permanently_fail(job=job, message=message, error=error)
                 logger.warning(
                     "dispatch_job_max_delivery_attempts_reached",
                     extra={
                         "dispatch_job_id": str(job.id),
                         "message_id": str(message.id),
-                        "status": job.status.value,
-                        "retry_count": next_attempt,
+                        "delivery_attempts": next_attempt,
                         "max_delivery_attempts": self.max_delivery_attempts,
-                        "provider_outcome": result.outcome.value,
                         "error": error,
                     },
                 )
                 return
 
-            self._message_repo.mark_retryable_failure(message)
+            delay_seconds = self._calculate_backoff(next_attempt)
+            if self._express_deadline_exceeded(message, ahead_seconds=delay_seconds):
+                self._permanently_fail(
+                    job=job,
+                    message=message,
+                    error="Express delivery deadline would be exceeded before next retry",
+                )
+                logger.warning(
+                    "dispatch_job_express_deadline_exceeded",
+                    extra={
+                        "dispatch_job_id": str(job.id),
+                        "message_id": str(message.id),
+                        "delivery_attempts": next_attempt,
+                        "express_ttl_seconds": self.express_ttl_seconds,
+                    },
+                )
+                return
 
+            self._message_repo.mark_retryable_failure(message)
             self._job_repo.mark_delivery_retry(
                 job,
                 error=result.error or "Temporary provider failure",
-                delay_seconds=self._calculate_backoff(next_attempt),
+                delay_seconds=delay_seconds,
             )
-
             logger.warning(
                 "dispatch_job_scheduled_for_retry",
                 extra={
                     "dispatch_job_id": str(job.id),
                     "message_id": str(message.id),
-                    "status": job.status.value,
-                    "retry_count": next_attempt,
+                    "delivery_attempts": next_attempt,
                     "max_delivery_attempts": self.max_delivery_attempts,
-                    "provider_outcome": result.outcome.value,
                     "error": result.error,
                 },
             )
-
-            return
 
     def _permanently_fail(
         self,
@@ -271,6 +335,15 @@ class DispatchUseCase:
             error=error,
         )
 
+    def _express_deadline_exceeded(self, message, *, ahead_seconds: float = 0.0) -> bool:
+        if self.express_ttl_seconds is None:
+            return False
+        if message.priority != MessagePriority.EXPRESS:
+            return False
+
+        age_seconds = (datetime.now(UTC) - message.created_at).total_seconds()
+        return age_seconds + ahead_seconds > self.express_ttl_seconds
+
     @staticmethod
     def _calculate_backoff(
         retry_count: int,
@@ -279,5 +352,4 @@ class DispatchUseCase:
             60,
             2 ** min(retry_count, 6),
         )
-
         return base_delay + random.uniform(0, 1)

@@ -130,29 +130,43 @@ class DispatchJobRepository:
             ),
         )
 
-    def reclaim_stale_published(
+    def reclaim_stale_inflight(
         self,
         *,
         priority: MessagePriority,
-        published_lease_seconds: int,
+        lease_seconds: int,
         limit: int,
     ) -> int:
-        """Recover jobs stranded in PUBLISHED (worker crashed/lost the message).
+        """Recover jobs stranded in-flight back to RETRY so the relay republishes.
 
-        Moves them back to RETRY so the relay republishes them. Counts as a
-        delivery attempt so a job whose worker keeps dying is eventually
-        retired by the worker's max-attempts guard instead of looping forever.
-        Returns the number of jobs reclaimed.
+        Two strand cases, each keyed off the timestamp that marks when the
+        in-flight phase began:
+          - PUBLISHED past `lease_seconds` of `published_at`: the worker never
+            picked up the message (crash / lost delivery).
+          - DISPATCHING past `lease_seconds` of `locked_at`: a worker claimed the
+            job for delivery and then died before recording the outcome.
+
+        Counts as a delivery attempt so a job whose worker keeps dying is
+        eventually retired by the worker's max-attempts guard instead of
+        looping forever. Returns the number of jobs reclaimed.
         """
         now = datetime.now(UTC)
-        stale_before = now - timedelta(seconds=published_lease_seconds)
+        stale_before = now - timedelta(seconds=lease_seconds)
 
         stale_ids = (
             select(DispatchJob.id)
             .where(
                 DispatchJob.priority == priority,
-                DispatchJob.status == DispatchJobStatus.PUBLISHED,
-                DispatchJob.published_at < stale_before,
+                or_(
+                    and_(
+                        DispatchJob.status == DispatchJobStatus.PUBLISHED,
+                        DispatchJob.published_at < stale_before,
+                    ),
+                    and_(
+                        DispatchJob.status == DispatchJobStatus.DISPATCHING,
+                        DispatchJob.locked_at < stale_before,
+                    ),
+                ),
             )
             .limit(limit)
         )
@@ -165,7 +179,7 @@ class DispatchJobRepository:
                 available_at=now,
                 locked_at=None,
                 locked_by=None,
-                last_error="reclaimed: stale published lease expired",
+                last_error="reclaimed: stale in-flight lease expired",
             )
         )
         result = cast(CursorResult[Any], self.session.execute(query))
@@ -249,6 +263,13 @@ class DispatchJobRepository:
         query = select(DispatchJob).where(DispatchJob.id == job_id).with_for_update()
 
         return self.session.scalar(query)
+
+    def mark_dispatching(self, job: DispatchJob, *, worker_id: str) -> None:
+        now = datetime.now(UTC)
+        job.status = DispatchJobStatus.DISPATCHING
+        job.locked_at = now
+        job.locked_by = worker_id
+        job.last_error = None
 
     def mark_completed(
         self,

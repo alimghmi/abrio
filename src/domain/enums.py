@@ -23,6 +23,7 @@ class PaymentStatus(StrEnum):
 class DispatchJobStatus(StrEnum):
     PENDING = "pending"
     PUBLISHED = "published"
+    DISPATCHING = "dispatching"
     RETRY = "retry"
     COMPLETED = "completed"
     FAILED = "failed"

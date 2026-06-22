@@ -146,9 +146,47 @@ def test_reclaim_stale_published_returns_jobs_to_retry(
 
     with db_session_factory() as session:
         repo = DispatchJobRepository(session)
-        reclaimed = repo.reclaim_stale_published(
+        reclaimed = repo.reclaim_stale_inflight(
             priority=MessagePriority.NORMAL,
-            published_lease_seconds=120,
+            lease_seconds=120,
+            limit=100,
+        )
+        session.commit()
+        assert reclaimed == 1
+
+    with db_session_factory() as session:
+        job = session.get(DispatchJob, job_id)
+        assert job is not None
+        assert job.status == DispatchJobStatus.RETRY
+        assert job.delivery_attempts == 1
+        assert job.locked_by is None
+
+
+def test_reclaim_stale_dispatching_returns_jobs_to_retry(
+    db_session_factory: SessionFactory,
+    seed_user: SeedUser,
+) -> None:
+    """A worker that died mid-delivery leaves a job DISPATCHING with a stale
+    worker lease; the reaper recovers it via locked_at."""
+    user = seed_user("u", 1000, 0)
+    job_id = make_job(
+        db_session_factory,
+        user_id=user,
+        available_offset_seconds=0,
+        status=DispatchJobStatus.DISPATCHING,
+    )
+    with db_session_factory() as session:
+        job = session.get(DispatchJob, job_id)
+        assert job is not None
+        job.locked_at = datetime.now(UTC) - timedelta(seconds=600)
+        job.locked_by = "dead-worker"
+        session.commit()
+
+    with db_session_factory() as session:
+        repo = DispatchJobRepository(session)
+        reclaimed = repo.reclaim_stale_inflight(
+            priority=MessagePriority.NORMAL,
+            lease_seconds=120,
             limit=100,
         )
         session.commit()

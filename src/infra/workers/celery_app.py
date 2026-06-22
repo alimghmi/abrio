@@ -8,7 +8,7 @@ from core.logging import configure_logging
 settings = get_settings()
 
 celery_app = Celery(
-    "abrio",
+    "abrio-gateway",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
     include=[

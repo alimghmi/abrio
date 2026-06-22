@@ -1,3 +1,4 @@
+import argparse
 import os
 import random
 import socket
@@ -11,13 +12,45 @@ from infra.db.repositories.dispatch_jobs import DispatchJobRepository
 from infra.db.session import SessionLocal
 from infra.workers.dispatch_tasks import process_dispatch_job
 
-logger = get_logger(__name__)
 
+logger = get_logger(__name__)
 IDLE_SLEEP_SECONDS = 0.5
+
+# How long a claim lease is acknowledged before another replica may steal the job.
 LEASE_SECONDS = 60
 
-EXPRESS_BATCH_SIZE = 20
-NORMAL_BATCH_SIZE = 80
+# How long a job may sit in-flight (PUBLISHED awaiting a worker, or DISPATCHING
+# while a worker delivers) before the reaper assumes it was lost and returns it
+# to RETRY.
+INFLIGHT_LEASE_SECONDS = 120
+
+# Throttle for the reaper sweep so it doesn't run every loop iteration.
+REAP_INTERVAL_SECONDS = 30
+REAP_LIMIT = 200
+
+
+@dataclass(frozen=True)
+class PriorityConfig:
+    priority: MessagePriority
+    queue: str
+    batch_size: int
+    per_user_limit: int
+
+
+PRIORITY_CONFIGS: dict[MessagePriority, PriorityConfig] = {
+    MessagePriority.EXPRESS: PriorityConfig(
+        priority=MessagePriority.EXPRESS,
+        queue="sms.express",
+        batch_size=20,
+        per_user_limit=5,
+    ),
+    MessagePriority.NORMAL: PriorityConfig(
+        priority=MessagePriority.NORMAL,
+        queue="sms.normal",
+        batch_size=80,
+        per_user_limit=20,
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -27,14 +60,7 @@ class ClaimedJob:
 
 
 def create_relay_id() -> str:
-    return f"{socket.gethostname()}:" f"{os.getpid()}:" f"{uuid4().hex[:8]}"
-
-
-def queue_for_priority(priority: MessagePriority) -> str:
-    if priority == MessagePriority.EXPRESS:
-        return "sms.express"
-
-    return "sms.normal"
+    return f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:8]}"
 
 
 def calculate_backoff(retry_count: int) -> float:
@@ -43,18 +69,37 @@ def calculate_backoff(retry_count: int) -> float:
     return exponential_delay + jitter
 
 
-def claim_jobs(
-    *,
-    priority: MessagePriority,
-    relay_id: str,
-    limit: int,
-) -> list[ClaimedJob]:
+def reclaim_stale_inflight(*, config: PriorityConfig, relay_id: str) -> int:
+    with SessionLocal() as session, session.begin():
+        repository = DispatchJobRepository(session)
+        reclaimed = repository.reclaim_stale_inflight(
+            priority=config.priority,
+            lease_seconds=INFLIGHT_LEASE_SECONDS,
+            limit=REAP_LIMIT,
+        )
+
+    if reclaimed:
+        logger.warning(
+            "dispatch_relay_reclaimed_stale_inflight",
+            extra={
+                "relay_id": relay_id,
+                "priority": config.priority.value,
+                "reclaimed_count": reclaimed,
+                "inflight_lease_seconds": INFLIGHT_LEASE_SECONDS,
+            },
+        )
+
+    return reclaimed
+
+
+def claim_jobs(*, config: PriorityConfig, relay_id: str) -> list[ClaimedJob]:
     logger.debug(
         "dispatch_relay_claim_started",
         extra={
             "relay_id": relay_id,
-            "priority": priority.value,
-            "limit": limit,
+            "priority": config.priority.value,
+            "limit": config.batch_size,
+            "per_user_limit": config.per_user_limit,
             "lease_seconds": LEASE_SECONDS,
         },
     )
@@ -63,10 +108,11 @@ def claim_jobs(
         repository = DispatchJobRepository(session)
 
         jobs = repository.claim_batch(
-            priority=priority,
+            priority=config.priority,
             relay_id=relay_id,
-            limit=limit,
+            limit=config.batch_size,
             lease_seconds=LEASE_SECONDS,
+            per_user_limit=config.per_user_limit,
         )
 
         claimed_jobs = [ClaimedJob(id=job.id, retry_count=job.retry_count) for job in jobs]
@@ -75,8 +121,8 @@ def claim_jobs(
             "dispatch_relay_claim_finished",
             extra={
                 "relay_id": relay_id,
-                "priority": priority.value,
-                "limit": limit,
+                "priority": config.priority.value,
+                "limit": config.batch_size,
                 "claimed_count": len(claimed_jobs),
             },
         )
@@ -87,27 +133,19 @@ def claim_jobs(
 def publish_claimed_jobs(
     *,
     jobs: list[ClaimedJob],
-    priority: MessagePriority,
+    config: PriorityConfig,
     relay_id: str,
 ) -> None:
     if not jobs:
-        logger.debug(
-            "dispatch_relay_publish_skipped",
-            extra={
-                "relay_id": relay_id,
-                "priority": priority.value,
-                "job_count": 0,
-            },
-        )
         return
 
-    queue = queue_for_priority(priority)
+    queue = config.queue
 
     logger.debug(
         "dispatch_relay_publish_started",
         extra={
             "relay_id": relay_id,
-            "priority": priority.value,
+            "priority": config.priority.value,
             "queue": queue,
             "job_count": len(jobs),
         },
@@ -131,7 +169,7 @@ def publish_claimed_jobs(
                 extra={
                     "dispatch_job_id": str(job.id),
                     "relay_id": relay_id,
-                    "priority": priority.value,
+                    "priority": config.priority.value,
                     "queue": queue,
                     "published_count": len(published_ids),
                 },
@@ -144,7 +182,7 @@ def publish_claimed_jobs(
                 extra={
                     "dispatch_job_id": str(job.id),
                     "relay_id": relay_id,
-                    "priority": priority.value,
+                    "priority": config.priority.value,
                     "queue": queue,
                     "published_count": len(published_ids),
                     "remaining_jobs": len(failed_jobs),
@@ -156,15 +194,6 @@ def publish_claimed_jobs(
 
     with SessionLocal() as session, session.begin():
         repository = DispatchJobRepository(session)
-        logger.debug(
-            "dispatch_relay_mark_published_started",
-            extra={
-                "relay_id": relay_id,
-                "priority": priority.value,
-                "queue": queue,
-                "published_count": len(published_ids),
-            },
-        )
         repository.mark_published(
             job_ids=published_ids,
             relay_id=relay_id,
@@ -180,11 +209,11 @@ def publish_claimed_jobs(
                 error=repr(publish_error),
                 delay_seconds=delay_seconds,
             )
-            logger.debug(
+            logger.warning(
                 "dispatch_relay_publish_retry_marked",
                 extra={
                     "relay_id": relay_id,
-                    "priority": priority.value,
+                    "priority": config.priority.value,
                     "queue": queue,
                     "failed_count": len(failed_jobs),
                     "highest_retry_count": highest_retry_count,
@@ -197,7 +226,7 @@ def publish_claimed_jobs(
         "dispatch_relay_publish_batch_finished",
         extra={
             "relay_id": relay_id,
-            "priority": priority.value,
+            "priority": config.priority.value,
             "queue": queue,
             "job_count": len(jobs),
             "published_count": len(published_ids),
@@ -206,82 +235,74 @@ def publish_claimed_jobs(
     )
 
 
-def run() -> None:
+def run(priority: MessagePriority) -> None:
     configure_logging()
     relay_id = create_relay_id()
+    config = PRIORITY_CONFIGS[priority]
 
     logger.info(
         "dispatch_relay_started",
         extra={
             "relay_id": relay_id,
+            "priority": config.priority.value,
+            "queue": config.queue,
+            "batch_size": config.batch_size,
+            "per_user_limit": config.per_user_limit,
             "lease_seconds": LEASE_SECONDS,
             "idle_sleep_seconds": IDLE_SLEEP_SECONDS,
-            "express_batch_size": EXPRESS_BATCH_SIZE,
-            "normal_batch_size": NORMAL_BATCH_SIZE,
         },
     )
 
+    last_reap = time.monotonic() - REAP_INTERVAL_SECONDS
+
     while True:
-        found_work = False
+        now = time.monotonic()
+        if now - last_reap >= REAP_INTERVAL_SECONDS:
+            reclaim_stale_inflight(config=config, relay_id=relay_id)
+            last_reap = now
 
-        express_jobs = claim_jobs(
-            priority=MessagePriority.EXPRESS,
-            relay_id=relay_id,
-            limit=EXPRESS_BATCH_SIZE,
-        )
+        jobs = claim_jobs(config=config, relay_id=relay_id)
 
-        if express_jobs:
+        if jobs:
             logger.info(
                 "dispatch_relay_jobs_claimed",
                 extra={
                     "relay_id": relay_id,
-                    "priority": MessagePriority.EXPRESS.value,
-                    "claimed_count": len(express_jobs),
-                    "limit": EXPRESS_BATCH_SIZE,
+                    "priority": config.priority.value,
+                    "claimed_count": len(jobs),
+                    "limit": config.batch_size,
                 },
             )
-
-            found_work = True
-            publish_claimed_jobs(
-                jobs=express_jobs,
-                priority=MessagePriority.EXPRESS,
-                relay_id=relay_id,
-            )
-
-        normal_jobs = claim_jobs(
-            priority=MessagePriority.NORMAL,
-            relay_id=relay_id,
-            limit=NORMAL_BATCH_SIZE,
-        )
-
-        if normal_jobs:
-            logger.info(
-                "dispatch_relay_jobs_claimed",
-                extra={
-                    "relay_id": relay_id,
-                    "priority": MessagePriority.NORMAL.value,
-                    "claimed_count": len(normal_jobs),
-                    "limit": NORMAL_BATCH_SIZE,
-                },
-            )
-
-            found_work = True
-            publish_claimed_jobs(
-                jobs=normal_jobs,
-                priority=MessagePriority.NORMAL,
-                relay_id=relay_id,
-            )
-
-        if not found_work:
+            publish_claimed_jobs(jobs=jobs, config=config, relay_id=relay_id)
+        else:
             logger.debug(
                 "dispatch_relay_idle",
                 extra={
                     "relay_id": relay_id,
+                    "priority": config.priority.value,
                     "idle_sleep_seconds": IDLE_SLEEP_SECONDS,
                 },
             )
             time.sleep(IDLE_SLEEP_SECONDS)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="SMS dispatch relay")
+    parser.add_argument(
+        "-Q",
+        "--queue",
+        choices=["normal", "express"],
+        default="normal",
+        help="Which priority this relay claims and publishes (default: normal)",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    priority = MessagePriority.EXPRESS if args.queue == "express" else MessagePriority.NORMAL
+    run(priority)
+
+
 if __name__ == "__main__":
-    run()
+    main()
