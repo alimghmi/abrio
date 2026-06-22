@@ -12,7 +12,6 @@ from infra.db.repositories.dispatch_jobs import DispatchJobRepository
 from infra.db.session import SessionLocal
 from infra.workers.dispatch_tasks import process_dispatch_job
 
-
 logger = get_logger(__name__)
 IDLE_SLEEP_SECONDS = 0.5
 
