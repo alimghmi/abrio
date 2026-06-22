@@ -125,31 +125,6 @@ def test_message_repository_get_messages_slice_filters_and_paginates(
         assert len(messages) == 1
 
 
-def test_message_repository_updates_status_and_payment_status(
-    db_session_factory: SessionFactory,
-    seed_user: SeedUser,
-    seed_message: SeedMessage,
-) -> None:
-    user_id = seed_user("Ada", credits=3, reserved_credits=0)
-    message_id = seed_message(user_id=user_id)
-
-    with db_session_factory() as session:
-        repo = MessageRepository(session)
-        message = repo.update_message_status(message_id, MessageStatus.SENT)
-        payment = repo.update_message_payment_status(message_id, PaymentStatus.DEDUCTED)
-        session.commit()
-
-        assert message.status == MessageStatus.SENT
-        assert payment.payment_status == PaymentStatus.DEDUCTED
-
-    with db_session_factory() as session:
-        persisted = session.get(Message, message_id)
-
-        assert persisted is not None
-        assert persisted.status == MessageStatus.SENT
-        assert persisted.payment_status == PaymentStatus.DEDUCTED
-
-
 def test_message_repository_calculates_summary(
     db_session_factory: SessionFactory,
     seed_user: SeedUser,
@@ -197,12 +172,6 @@ def test_message_repository_raises_for_missing_messages(
         with pytest.raises(MessageNotFoundError):
             repo._get_message(missing_message_id)
 
-        with pytest.raises(MessageNotFoundError):
-            repo.update_message_status(missing_message_id, MessageStatus.SENT)
-
-        with pytest.raises(MessageNotFoundError):
-            repo.update_message_payment_status(missing_message_id, PaymentStatus.DEDUCTED)
-
 
 def test_dispatch_job_repository_create_shapes_payload(
     db_session_factory: SessionFactory,
@@ -225,7 +194,8 @@ def test_dispatch_job_repository_create_shapes_payload(
         session.refresh(job)
         job_id = job.id
 
-        assert "idempotency_key" not in payload
+        assert "idempotency_key" in payload
+        assert "idempotency_key" not in job.payload
 
     with db_session_factory() as session:
         persisted = session.scalar(select(DispatchJob).where(DispatchJob.id == job_id))

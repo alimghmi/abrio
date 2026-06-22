@@ -26,7 +26,7 @@ class DispatchJob(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     message_id: Mapped[UUID] = mapped_column(
-        ForeignKey("messages.id", ondelete="CASCADE"), unique=True, index=True
+        ForeignKey("messages.id", ondelete="CASCADE"), unique=True
     )
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
     priority: Mapped[MessagePriority]
@@ -59,8 +59,8 @@ class DispatchJob(Base):
         Index(
             "ix_dispatch_jobs_ready",
             "status",
-            "available_at",
             "priority",
+            "available_at",
             "created_at",
         ),
     )
