@@ -1,12 +1,22 @@
 from uuid import UUID
 
 from app.usecases.dispatch import DispatchUseCase
+from core.config import get_settings
 from core.logging import get_logger
 from infra.db.session import SessionLocal
 from infra.providers.dummy import DummySmsProvider
+from infra.providers.mock import MockSmsProvider
+from infra.providers.types import SmsProvider
 from infra.workers.celery_app import celery_app
 
 logger = get_logger(__name__)
+
+
+def _build_provider() -> SmsProvider:
+    settings = get_settings()
+    if settings.sms_provider == "mock":
+        return MockSmsProvider(fail_rate=settings.sms_mock_fail_rate)
+    return DummySmsProvider()
 
 
 @celery_app.task(
@@ -44,10 +54,12 @@ def process_dispatch_job(job_id: str) -> None:
                 extra={"dispatch_job_id": str(parsed_job_id)},
             )
 
+            settings = get_settings()
             usecase = DispatchUseCase(
                 session=session,
-                provider=DummySmsProvider(),
-                max_delivery_attempts=5,
+                provider=_build_provider(),
+                max_delivery_attempts=settings.max_delivery_attempts,
+                express_ttl_seconds=settings.express_ttl_seconds,
             )
 
             logger.debug(
