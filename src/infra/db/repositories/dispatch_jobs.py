@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import Select, or_, select, update
 from sqlalchemy.orm import Session
 
 from domain.enums import DispatchJobStatus, MessagePriority
@@ -37,7 +37,30 @@ class DispatchJobRepository:
         now = datetime.now(UTC)
         stale_before = now - timedelta(seconds=lease_seconds)
 
-        query = (
+        query = self._build_claim_batch_query(
+            priority=priority,
+            now=now,
+            stale_before=stale_before,
+            limit=limit,
+        )
+
+        jobs = list(self.session.scalars(query).all())
+
+        for job in jobs:
+            job.locked_at = now
+            job.locked_by = relay_id
+
+        return jobs
+
+    @staticmethod
+    def _build_claim_batch_query(
+        *,
+        priority: MessagePriority,
+        now: datetime,
+        stale_before: datetime,
+        limit: int,
+    ) -> Select[tuple[DispatchJob]]:
+        return (
             select(DispatchJob)
             .where(
                 DispatchJob.priority == priority,
@@ -60,14 +83,6 @@ class DispatchJobRepository:
             .with_for_update(skip_locked=True)
             .limit(limit)
         )
-
-        jobs = list(self.session.scalars(query).all())
-
-        for job in jobs:
-            job.locked_at = now
-            job.locked_by = relay_id
-
-        return jobs
 
     def mark_published(
         self,
@@ -116,11 +131,17 @@ class DispatchJobRepository:
         now = datetime.now(UTC)
         next_attempt = now + timedelta(seconds=delay_seconds)
 
-        statement = (
+        query = (
             update(DispatchJob)
             .where(
                 DispatchJob.id.in_(job_ids),
                 DispatchJob.locked_by == relay_id,
+                DispatchJob.status.in_(
+                    [
+                        DispatchJobStatus.PENDING,
+                        DispatchJobStatus.RETRY,
+                    ]
+                ),
             )
             .values(
                 status=DispatchJobStatus.RETRY,
@@ -132,15 +153,15 @@ class DispatchJobRepository:
             )
         )
 
-        self.session.execute(statement)
+        self.session.execute(query)
 
     def get_for_update(
         self,
         job_id: UUID,
     ) -> DispatchJob | None:
-        statement = select(DispatchJob).where(DispatchJob.id == job_id).with_for_update()
+        query = select(DispatchJob).where(DispatchJob.id == job_id).with_for_update()
 
-        return self.session.scalar(statement)
+        return self.session.scalar(query)
 
     def mark_completed(
         self,
