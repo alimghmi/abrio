@@ -12,7 +12,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "sms-gateway"
+    app_name: str = "abrio-gateway"
     app_env: str = "local"
     app_debug: bool = False
     api_prefix: str = "/api"
