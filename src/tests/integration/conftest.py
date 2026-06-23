@@ -16,9 +16,7 @@ TEST_DATABASE_URL = os.environ.get(
     "postgresql+psycopg://sms_gateway:sms_gateway@localhost:5432/sms_gateway_test",
 )
 
-_TRUNCATE_SQL = text(
-    "TRUNCATE dispatch_jobs, messages, balances, users RESTART IDENTITY CASCADE"
-)
+_TRUNCATE_SQL = text("TRUNCATE dispatch_jobs, messages, balances, users RESTART IDENTITY CASCADE")
 
 
 @pytest.fixture(scope="session")
