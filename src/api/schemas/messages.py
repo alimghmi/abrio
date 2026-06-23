@@ -59,11 +59,22 @@ class BatchMessageResponse(BaseModel):
     messages: list[MessageResponse]
 
 
-class MessagesSummaryResponse(BaseModel):
-    user_id: int
-    total: int
+class MessagesStatusSummaryResponse(BaseModel):
     queued: int
     dispatching: int
     failed: int
     sent: int
     permanent_failed: int
+
+
+class PaymentStatusSummaryResponse(BaseModel):
+    reserved: int
+    deducted: int
+    refunded: int
+
+
+class MessagesSummaryResponse(BaseModel):
+    user_id: int
+    total: int
+    message_status: MessagesStatusSummaryResponse
+    payment_status: PaymentStatusSummaryResponse

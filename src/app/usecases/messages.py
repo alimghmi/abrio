@@ -152,7 +152,7 @@ class MessageUseCase:
             created_count=len(message_instances), messages=message_instances
         )
 
-    def calculate_summary(self, user_id: int) -> dict[str, int]:
+    def calculate_summary(self, user_id: int) -> dict[str, int | dict]:
         return self._repo.calculate_summary(user_id=user_id)
 
     def _get_message_cost(self, message: MessageRequest | BatchMessageRequestItem) -> Decimal:
