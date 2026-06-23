@@ -1,0 +1,36 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - api:8000
+
+  - job_name: relay
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - relay:9101
+          - relay-express:9101
+
+  - job_name: workers
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - worker-normal:9102
+          - worker-express:9102
+
+  - job_name: rabbitmq
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - rabbitmq:15692
+
+  - job_name: prometheus
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - prometheus:9090
