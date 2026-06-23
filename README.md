@@ -29,6 +29,9 @@ uv run python scripts/loadtest.py      # correctness under pressure
 uv run python scripts/benchmark.py     # throughput and latency report
 ```
 
+Rate limiting is disabled by default so these scripts measure storage,
+dispatch, and credit behavior without ingress throttling.
+
 Tune with env vars:
 
 ```bash
