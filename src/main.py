@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
+from api.rate_limit import RateLimitMiddleware, build_redis_rate_limiter
 from api.v1.router import api_router
 from core.config import get_settings
 from core.logging import configure_logging, get_logger
@@ -18,7 +19,23 @@ def create_app() -> FastAPI:
         debug=settings.app_debug,
     )
     app.include_router(api_router, prefix=settings.api_prefix)
-    logger.info("application_created", extra={"api_prefix": settings.api_prefix})
+
+    if settings.rate_limit_enabled:
+        rate_limiter = build_redis_rate_limiter(settings)
+        app.add_middleware(
+            RateLimitMiddleware,
+            settings=settings,
+            limiter=rate_limiter,
+        )
+        app.add_event_handler("shutdown", rate_limiter.redis.aclose)  # type: ignore[attr-defined]
+
+    logger.info(
+        "application_created",
+        extra={
+            "api_prefix": settings.api_prefix,
+            "rate_limit_enabled": settings.rate_limit_enabled,
+        },
+    )
     return app
 
 
