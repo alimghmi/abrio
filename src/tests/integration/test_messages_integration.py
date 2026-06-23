@@ -144,9 +144,9 @@ def test_message_endpoint_flow_persists_message_reserves_balance_and_creates_dis
             usecase=MessageUseCase(session, settings),
         )
 
-        assert summary == {
-            "user_id": user_id,
-            "total": 1,
+        assert summary["user_id"] == user_id
+        assert summary["total"] == 1
+        assert summary["message_status"] == {
             "queued": 1,
             "dispatching": 0,
             "failed": 0,

@@ -140,10 +140,9 @@ def test_message_repository_calculates_summary(
 
     with db_session_factory() as session:
         summary = MessageRepository(session).calculate_summary(user_id)
-
-        assert summary == {
-            "user_id": user_id,
-            "total": 5,
+        assert summary["user_id"] == user_id
+        assert summary["total"] == 5
+        assert summary["message_status"] == {
             "queued": 1,
             "dispatching": 1,
             "failed": 1,
