@@ -27,7 +27,7 @@ def create_app() -> FastAPI:
             settings=settings,
             limiter=rate_limiter,
         )
-        app.add_event_handler("shutdown", rate_limiter.redis.aclose)  # type: ignore[attr-defined]
+        app.router.on_shutdown.append(rate_limiter.redis.aclose)
 
     logger.info(
         "application_created",

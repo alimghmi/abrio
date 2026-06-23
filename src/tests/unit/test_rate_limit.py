@@ -17,7 +17,8 @@ from api.rate_limit import (
     ResolvedRateLimit,
     resolve_rate_limits,
 )
-from core.config import Settings
+from core.config import Settings, get_settings
+from main import create_app
 
 pytestmark = pytest.mark.unit
 
@@ -128,6 +129,20 @@ def error_code(response: dict[str, object]) -> object:
     error = response["error"]
     assert isinstance(error, dict)
     return error["code"]
+
+
+def test_create_app_with_rate_limit_enabled_does_not_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "true")
+    get_settings.cache_clear()
+    try:
+        app = create_app()
+    finally:
+        get_settings.cache_clear()
+
+    assert any(middleware.cls is RateLimitMiddleware for middleware in app.user_middleware)
+    assert app.router.on_shutdown
 
 
 def test_single_message_limit_is_keyed_by_user_and_priority() -> None:
