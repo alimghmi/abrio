@@ -1,17 +1,3 @@
-"""
-1. Balance limit under concurrency: a user with C credits hit with many more
-   than C concurrent submissions accepts exactly C and never goes negative.
-2. Idempotency: resubmitting the same key returns the same message, charged once.
-3. Fairness: a hot user flooding the queue must not starve small users — their
-   messages drain quickly even while the hot backlog is still being worked off.
-4. Settlement correctness: once drained, credits deducted == messages sent,
-   reserved credits return to zero, nothing is left stuck in a non-terminal state.
-
-Usage:
-    uv run python scripts/loadtest.py
-    BASE_URL=http://localhost:8000/api/v1 HOT_COUNT=4000 uv run python scripts/loadtest.py
-"""
-
 from __future__ import annotations
 
 import os
@@ -26,11 +12,9 @@ import httpx
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000/api/v1")
 RECIPIENT = "+989121234567"
 CONCURRENCY = int(os.environ.get("CONCURRENCY", "32"))
-
 # Balance-limit scenario.
 LIMIT_CREDITS = int(os.environ.get("LIMIT_CREDITS", "10"))
 LIMIT_ATTEMPTS = int(os.environ.get("LIMIT_ATTEMPTS", "100"))
-
 # Fairness scenario.
 HOT_COUNT = int(os.environ.get("HOT_COUNT", "4000"))
 SMALL_USERS = int(os.environ.get("SMALL_USERS", "6"))
@@ -73,7 +57,8 @@ def get_balance(user_id: int) -> dict[str, str]:
 def summary(user_id: int) -> dict[str, int]:
     resp = client.get("/messages/summary", params={"user_id": user_id})
     resp.raise_for_status()
-    return resp.json()
+    resp = resp.json()
+    return {"user_id": resp["user_id"], "total": resp["total"], **resp["message_status"]}
 
 
 def send(user_id: int, body: str, priority: str, idempotency_key: str | None = None) -> int:
@@ -102,9 +87,6 @@ def send_returning_json(user_id: int, body: str, idem: str) -> dict:
 
 
 def send_batch(user_id: int, count: int, priority: str = "normal") -> int:
-    """Submit `count` messages for a user via the batch endpoint (<=100/call).
-    Returns the number created. Batching loads a large backlog fast enough that
-    it stands in the queue, so fairness is actually observable."""
     created = 0
     for start in range(0, count, 100):
         chunk = min(100, count - start)
@@ -258,6 +240,15 @@ def scenario_fairness(report: Report) -> None:
 
 
 def main() -> int:
+    """
+    1. Balance limit under concurrency: a user with C credits hit with many more
+    than C concurrent submissions accepts exactly C and never goes negative.
+    2. Idempotency: resubmitting the same key returns the same message, charged once.
+    3. Fairness: a hot user flooding the queue must not starve small users — their
+    messages drain quickly even while the hot backlog is still being worked off.
+    4. Settlement correctness: once drained, credits deducted == messages sent,
+    reserved credits return to zero, nothing is left stuck in a non-terminal state.
+    """
     print(f"Target: {BASE_URL}")
     try:
         client.get("/health/ready").raise_for_status()
