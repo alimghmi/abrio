@@ -17,6 +17,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from core.config import Settings
 from core.logging import get_logger
+from core.metrics import record_submission_rejected
 from domain.enums import MessagePriority
 
 RATE_LIMITED_CODE = "rate_limited"
@@ -120,6 +121,7 @@ class RateLimitDecision:
     limit: int
     remaining: int
     retry_after_seconds: int
+    denied_rule_name: str | None = None
 
 
 class RateLimiter(Protocol):
@@ -160,6 +162,7 @@ class RedisTokenBucketRateLimiter:
             limit=header_bucket.rule.limit,
             remaining=remaining,
             retry_after_seconds=retry_after_seconds,
+            denied_rule_name=None if allowed else header_bucket.rule.name,
         )
 
     def _key_for(self, bucket: ResolvedRateLimit) -> str:
@@ -193,9 +196,11 @@ class RateLimitMiddleware:
             decision = await self.limiter.check(buckets)
         except RedisError as exc:
             self.logger.warning(
-                "rate_limit_redis_error",
+                "dependency_unavailable",
                 extra={
-                    "error": repr(exc),
+                    "dependency": "redis",
+                    "operation": "rate_limit_check",
+                    "error_type": type(exc).__name__,
                     "fail_open": self.settings.rate_limit_fail_open,
                 },
                 exc_info=True,
@@ -205,10 +210,21 @@ class RateLimitMiddleware:
                 return
 
             response = rate_limit_unavailable_response()
+            record_rate_limit_rejection(scope, self.settings, "system_rate_limited")
             await response(scope, request_receive, send)
             return
 
         if not decision.allowed:
+            reason = rate_limit_rejection_reason(decision.denied_rule_name)
+            record_rate_limit_rejection(scope, self.settings, reason)
+            self.logger.info(
+                "rate_limit_rejected",
+                extra={
+                    "reason": reason,
+                    "limit": decision.limit,
+                    "retry_after_seconds": decision.retry_after_seconds,
+                },
+            )
             response = rate_limited_response(decision)
             await response(scope, request_receive, send)
             return
@@ -308,6 +324,34 @@ def resolve_rate_limits(
         )
 
     return system_request_limits(settings)
+
+
+def record_rate_limit_rejection(scope: Scope, settings: Settings, reason: str) -> None:
+    submission_type = submission_type_for_scope(scope, settings)
+    if submission_type is None:
+        return
+
+    record_submission_rejected(reason=reason, submission_type=submission_type)
+
+
+def submission_type_for_scope(scope: Scope, settings: Settings) -> str | None:
+    method = str(scope.get("method", "")).upper()
+    relative_path = relative_api_path(scope, settings)
+    if method == "POST" and relative_path == "/messages":
+        return "single"
+    if method == "POST" and relative_path == "/messages/batch":
+        return "batch"
+    return None
+
+
+def rate_limit_rejection_reason(denied_rule_name: str | None) -> str:
+    if denied_rule_name is None:
+        return "rate_limited"
+    if denied_rule_name.startswith("global:"):
+        return "global_rate_limited"
+    if denied_rule_name.startswith("system:"):
+        return "system_rate_limited"
+    return "rate_limited"
 
 
 def resolve_single_message_limits(

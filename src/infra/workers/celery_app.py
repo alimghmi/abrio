@@ -1,11 +1,15 @@
+import os
+
 from celery import Celery
-from celery.signals import setup_logging
+from celery.signals import setup_logging, worker_process_shutdown, worker_ready
 from kombu import Exchange, Queue
+from prometheus_client import CollectorRegistry, multiprocess, start_http_server
 
 from core.config import get_settings
 from core.logging import configure_logging
 
 settings = get_settings()
+_worker_metrics_started = False
 
 celery_app = Celery(
     "abrio-gateway",
@@ -54,3 +58,30 @@ celery_app.conf.update(
 @setup_logging.connect
 def configure_celery_logging(**_: object) -> None:
     configure_logging(settings)
+
+
+@worker_ready.connect
+def start_worker_metrics_server(**_: object) -> None:
+    global _worker_metrics_started
+    if not os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        return
+    if _worker_metrics_started:
+        return
+
+    port = int(os.environ.get("METRICS_PORT", "9102"))
+    registry = CollectorRegistry()
+    multiprocess.MultiProcessCollector(registry)
+    start_http_server(
+        port,
+        addr="0.0.0.0",
+        registry=registry,
+    )
+    _worker_metrics_started = True
+
+
+@worker_process_shutdown.connect
+def mark_worker_process_dead(pid: int | None = None, **_: object) -> None:
+    if not os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        return
+
+    multiprocess.mark_process_dead(pid or os.getpid())

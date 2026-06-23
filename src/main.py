@@ -6,6 +6,7 @@ from api.rate_limit import RateLimitMiddleware, build_redis_rate_limiter
 from api.v1.router import api_router
 from core.config import get_settings
 from core.logging import configure_logging, get_logger
+from core.observability import RequestIdAndMetricsMiddleware, metrics_endpoint
 from domain.errors import AppError
 
 
@@ -19,6 +20,7 @@ def create_app() -> FastAPI:
         debug=settings.app_debug,
     )
     app.include_router(api_router, prefix=settings.api_prefix)
+    app.add_api_route("/metrics", metrics_endpoint, methods=["GET"], include_in_schema=False)
 
     if settings.rate_limit_enabled:
         rate_limiter = build_redis_rate_limiter(settings)
@@ -28,6 +30,8 @@ def create_app() -> FastAPI:
             limiter=rate_limiter,
         )
         app.router.on_shutdown.append(rate_limiter.redis.aclose)
+
+    app.add_middleware(RequestIdAndMetricsMiddleware, settings=settings)
 
     logger.info(
         "application_created",
