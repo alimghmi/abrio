@@ -1,7 +1,5 @@
 ![Banner](docs/banner.svg)
 
-# abrio
-
 Multi-tenant SMS gateway for idempotent message submission, credit reservation, transactional outbox dispatch, priority queues, fair task distribution, and safe retries.
 
 ## Run
