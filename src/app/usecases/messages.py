@@ -179,9 +179,7 @@ class MessageUseCase:
                 isinstance(e.orig, CheckViolation)
                 and constraint_name == "check_credits_ge_reserved_credits"
             ):
-                _record_submission_rejection(
-                    reason="insufficient_balance", submission_type="batch"
-                )
+                _record_submission_rejection(reason="insufficient_balance", submission_type="batch")
                 raise InsufficientBalanceError(
                     payload.user_id, message_cost=total_batch_cost
                 ) from e

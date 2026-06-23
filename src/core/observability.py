@@ -25,9 +25,7 @@ class RequestIdAndMetricsMiddleware(BaseHTTPMiddleware):
         self.settings = settings
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        request_id = normalize_request_id(
-            request.headers.get(self.settings.log_request_id_header)
-        )
+        request_id = normalize_request_id(request.headers.get(self.settings.log_request_id_header))
         token = set_request_id(request_id)
         start_time = time.perf_counter()
 

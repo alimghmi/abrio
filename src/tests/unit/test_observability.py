@@ -173,9 +173,7 @@ def run_asgi_get(
         message for message in messages if message["type"] == "http.response.start"
     )
     body = b"".join(
-        message.get("body", b"")
-        for message in messages
-        if message["type"] == "http.response.body"
+        message.get("body", b"") for message in messages if message["type"] == "http.response.body"
     )
     response_headers = {
         name.decode("latin-1"): value.decode("latin-1")
