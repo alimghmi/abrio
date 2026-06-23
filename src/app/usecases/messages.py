@@ -52,12 +52,12 @@ class MessageUseCase:
         payload_dict = {**payload.model_dump(), "cost": message_cost}
         try:
             with self.session.begin():
-                self._balance_repo.reserve_credits(payload.user_id, message_cost)
                 message = self._repo.create_message(payload=payload_dict)
                 self.session.flush()
                 self._dispatch_repo.create(
                     message_id=message.id, priority=payload.priority, payload=payload_dict
                 )
+                self._balance_repo.reserve_credits(payload.user_id, message_cost)
         except IntegrityError as e:
             constraint_name = getattr(
                 getattr(e.orig, "diag", None),

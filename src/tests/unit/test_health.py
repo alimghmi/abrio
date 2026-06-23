@@ -13,7 +13,7 @@ def test_health_check_live_returns_ok() -> None:
     response = asyncio.run(health_check_live())
 
     assert response.status == "ok"
-    assert response.service == "sms-gateway"
+    assert response.service == "abrio-gateway"
     assert response.timestamp <= time.time()
 
 

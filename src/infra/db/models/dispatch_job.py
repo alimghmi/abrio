@@ -26,12 +26,16 @@ class DispatchJob(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     message_id: Mapped[UUID] = mapped_column(
-        ForeignKey("messages.id", ondelete="CASCADE"), unique=True, index=True
+        ForeignKey("messages.id", ondelete="CASCADE"), unique=True
     )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
     priority: Mapped[MessagePriority]
     status: Mapped[DispatchJobStatus] = mapped_column(default=DispatchJobStatus.PENDING)
+    # Publish attempts (relay -> RabbitMQ). Separate budget from delivery_attempts.
     retry_count: Mapped[int] = mapped_column(default=0)
+    # Delivery attempts (worker -> provider). Separate budget from retry_count.
+    delivery_attempts: Mapped[int] = mapped_column(default=0)
     available_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -54,13 +58,24 @@ class DispatchJob(Base):
     __table_args__ = (
         CheckConstraint("retry_count >= 0", name="check_dispatch_job_retry_count_gte_zero"),
         CheckConstraint(
+            "delivery_attempts >= 0", name="check_dispatch_job_delivery_attempts_gte_zero"
+        ),
+        CheckConstraint(
             "updated_at >= created_at", name="check_dispatch_job_updated_at_ge_created_at"
         ),
         Index(
             "ix_dispatch_jobs_ready",
+            "priority",
             "status",
             "available_at",
-            "priority",
             "created_at",
+        ),
+        # Supports the per-customer fairness window in claim_batch.
+        Index(
+            "ix_dispatch_jobs_fairness",
+            "priority",
+            "status",
+            "user_id",
+            "available_at",
         ),
     )

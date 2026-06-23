@@ -6,7 +6,7 @@ services:
       sh -c "python -m backend_pre_start &&
       uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
     environment:
-      APP_NAME: ${APP_NAME:-sms-gateway}
+      APP_NAME: ${APP_NAME:-abrio-gateway}
       APP_ENV: ${APP_ENV:-local}
       APP_DEBUG: ${APP_DEBUG:-true}
       API_PREFIX: ${API_PREFIX:-/api}
@@ -45,12 +45,94 @@ services:
       timeout: 5s
       retries: 5
 
-  worker:
+  relay-normal:
     build:
       context: .
-    command: celery -A infra.workers.celery_app.celery_app worker --loglevel=info
+    command: python -m infra.workers.dispatch_relay -Q normal
     environment:
-      APP_NAME: ${APP_NAME:-sms-gateway}
+      APP_NAME: ${APP_NAME:-abrio-gateway}
+      APP_ENV: ${APP_ENV:-local}
+      APP_DEBUG: ${APP_DEBUG:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_JSON: ${LOG_JSON:-false}
+
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://sms_gateway:sms_gateway@postgres:5432/sms_gateway}
+
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-amqp://guest:guest@rabbitmq:5672//}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+
+    volumes:
+      - ./src:/app/src
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+  relay-express:
+    build:
+      context: .
+    command: python -m infra.workers.dispatch_relay -Q express
+    environment:
+      APP_NAME: ${APP_NAME:-abrio-gateway}
+      APP_ENV: ${APP_ENV:-local}
+      APP_DEBUG: ${APP_DEBUG:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_JSON: ${LOG_JSON:-false}
+
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://sms_gateway:sms_gateway@postgres:5432/sms_gateway}
+
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-amqp://guest:guest@rabbitmq:5672//}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+
+    volumes:
+      - ./src:/app/src
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+  worker-normal:
+    build:
+      context: .
+    command: celery -A infra.workers.celery_app.celery_app worker --loglevel=${LOG_LEVEL:-INFO} -Q sms.normal
+    environment:
+      APP_NAME: ${APP_NAME:-abrio-gateway}
+      APP_ENV: ${APP_ENV:-local}
+      APP_DEBUG: ${APP_DEBUG:-true}
+      API_PREFIX: ${API_PREFIX:-/api/v1}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_JSON: ${LOG_JSON:-false}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://sms_gateway:sms_gateway@postgres:5432/sms_gateway}
+      DB_CREATE_ALL: ${DB_CREATE_ALL:-true}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-amqp://guest:guest@rabbitmq:5672//}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+      CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER:-false}
+      CELERY_TASK_EAGER_PROPAGATES: ${CELERY_TASK_EAGER_PROPAGATES:-true}
+    volumes:
+      - ./src:/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker-express:
+    build:
+      context: .
+    command: celery -A infra.workers.celery_app.celery_app worker --loglevel=${LOG_LEVEL:-INFO} -Q sms.express
+    environment:
+      APP_NAME: ${APP_NAME:-abrio-gateway}
       APP_ENV: ${APP_ENV:-local}
       APP_DEBUG: ${APP_DEBUG:-true}
       API_PREFIX: ${API_PREFIX:-/api/v1}

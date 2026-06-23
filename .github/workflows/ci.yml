@@ -48,7 +48,7 @@ jobs:
     timeout-minutes: 20
 
     env:
-      APP_NAME: sms-gateway
+      APP_NAME: abrio-gateway
       APP_ENV: test
       APP_DEBUG: "false"
       API_PREFIX: /api

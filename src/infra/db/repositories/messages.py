@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from domain.enums import MessagePriority, MessageStatus, PaymentStatus
@@ -94,28 +94,28 @@ class MessageRepository:
         self.session.add(new_message)
         return new_message
 
-    def update_message_status(self, message_id: UUID, status: MessageStatus):
-        query = (
-            update(Message).where(Message.id == message_id).values(status=status).returning(Message)
-        )
+    def get_for_update(self, message_id: UUID) -> Message:
+        query = select(Message).where(Message.id == message_id).with_for_update()
         message = self.session.scalar(query)
         if message is None:
-            raise MessageNotFoundError(message_id=message_id)
+            raise MessageNotFoundError(message_id)
 
         return message
 
-    def update_message_payment_status(self, message_id: UUID, payment_status: PaymentStatus):
-        query = (
-            update(Message)
-            .where(Message.id == message_id)
-            .values(payment_status=payment_status)
-            .returning(Message)
-        )
-        message = self.session.scalar(query)
-        if message is None:
-            raise MessageNotFoundError(message_id=message_id)
+    def mark_dispatching(self, message: Message) -> None:
+        message.status = MessageStatus.DISPATCHING
 
-        return message
+    def mark_sent(self, message: Message) -> None:
+        message.status = MessageStatus.SENT
+        message.payment_status = PaymentStatus.DEDUCTED
+
+    def mark_retryable_failure(self, message: Message) -> None:
+        message.status = MessageStatus.FAILED
+        message.payment_status = PaymentStatus.RESERVED
+
+    def mark_permanent_failure(self, message: Message) -> None:
+        message.status = MessageStatus.PERMANENT_FAILED
+        message.payment_status = PaymentStatus.REFUNDED
 
     def calculate_summary(self, user_id: int) -> dict[str, int]:
         query = select(
