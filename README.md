@@ -1,10 +1,11 @@
-![Banner](docs/banner.svg)
+# abrio
 
 Multi-tenant SMS gateway for idempotent message submission, credit reservation, transactional outbox dispatch, priority queues, fair task distribution, and safe retries.
 
 ## Run
 
 ```bash
+docker network create abrio-network
 docker compose up --build
 ```
 
@@ -41,4 +42,4 @@ WORKERS=100 DURATION=10 uv run python scripts/benchmark.py
 
 ## Docs
 
-See [docs/README.md](docs/README.md) for architecture, invariants, dispatch flow, and scaling notes.
+See [docs](docs/) for architecture, invariants, dispatch flow, and scaling notes.
