@@ -117,7 +117,7 @@ class MessageRepository:
         message.status = MessageStatus.PERMANENT_FAILED
         message.payment_status = PaymentStatus.REFUNDED
 
-    def calculate_summary(self, user_id: int) -> dict[str, int]:
+    def calculate_summary(self, user_id: int) -> dict[str, int | dict]:
         query = select(
             func.count(Message.id).label("total"),
             func.count(Message.id).filter(Message.status == MessageStatus.QUEUED).label("queued"),
@@ -129,14 +129,30 @@ class MessageRepository:
             func.count(Message.id)
             .filter(Message.status == MessageStatus.PERMANENT_FAILED)
             .label("permanent_failed"),
+            func.count(Message.id)
+            .filter(Message.payment_status == PaymentStatus.RESERVED)
+            .label("reserved"),
+            func.count(Message.id)
+            .filter(Message.payment_status == PaymentStatus.DEDUCTED)
+            .label("deducted"),
+            func.count(Message.id)
+            .filter(Message.payment_status == PaymentStatus.REFUNDED)
+            .label("refunded"),
         ).where(Message.user_id == user_id)
         result = self.session.execute(query).one()
         return {
             "user_id": user_id,
             "total": result.total,
-            "queued": result.queued,
-            "dispatching": result.dispatching,
-            "failed": result.failed,
-            "sent": result.sent,
-            "permanent_failed": result.permanent_failed,
+            "message_status": {
+                "queued": result.queued,
+                "dispatching": result.dispatching,
+                "failed": result.failed,
+                "sent": result.sent,
+                "permanent_failed": result.permanent_failed,
+            },
+            "payment_status": {
+                "reserved": result.reserved,
+                "deducted": result.deducted,
+                "refunded": result.refunded,
+            },
         }
