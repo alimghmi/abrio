@@ -17,7 +17,9 @@ class Settings(BaseSettings):
     app_debug: bool = False
     api_prefix: str = "/api"
     log_level: str = "INFO"
-    log_json: bool = False
+    log_format: str = "console"
+    log_request_id_header: str = "X-Request-ID"
+    service_name: str | None = None
 
     cost_per_message: Decimal = Decimal("1.00")
     cost_per_express_message: Decimal = Decimal("1.00")
@@ -88,6 +90,22 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://localhost:6379/1"
     celery_task_always_eager: bool = False
     celery_task_eager_propagates: bool = True
+
+    @property
+    def use_json_logs(self) -> bool:
+        return self.log_format.lower() == "json"
+
+    @property
+    def resolved_service_name(self) -> str:
+        return self.service_name or self.app_name
+
+    @field_validator("log_format")
+    @classmethod
+    def validate_log_format(cls, value: str) -> str:
+        normalized = value.lower()
+        if normalized not in {"console", "json"}:
+            raise ValueError("log_format must be 'console' or 'json'")
+        return normalized
 
     @field_validator("cost_per_message", "cost_per_express_message")
     @classmethod

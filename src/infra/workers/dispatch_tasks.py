@@ -74,11 +74,11 @@ def process_dispatch_job(job_id: str) -> None:
                 extra={"dispatch_job_id": str(parsed_job_id)},
             )
     except Exception as exc:
-        logger.warning(
+        logger.error(
             "dispatch_job_processing_failed",
             extra={
                 "dispatch_job_id": str(parsed_job_id) if parsed_job_id else job_id,
-                "error": repr(exc),
+                "error_type": type(exc).__name__,
             },
             exc_info=True,
         )
