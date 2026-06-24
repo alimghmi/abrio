@@ -52,6 +52,9 @@ celery_app.conf.update(
         "confirm_publish": True,
     },
     worker_hijack_root_logger=False,
+    worker_prefetch_multiplier=1,
+    task_soft_time_limit=settings.worker_task_soft_time_limit_seconds,
+    task_time_limit=settings.worker_task_time_limit_seconds,
 )
 
 
