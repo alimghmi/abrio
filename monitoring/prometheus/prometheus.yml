@@ -13,7 +13,7 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets:
-          - relay:9101
+          - relay-normal:9101
           - relay-express:9101
 
   - job_name: workers
@@ -25,6 +25,15 @@ scrape_configs:
 
   - job_name: rabbitmq
     metrics_path: /metrics
+    static_configs:
+      - targets:
+          - rabbitmq:15692
+
+  - job_name: rabbitmq_detailed
+    metrics_path: /metrics/detailed
+    params:
+      family: [queue_coarse_metrics, queue_consumer_count]
+      vhost: ["/"]
     static_configs:
       - targets:
           - rabbitmq:15692

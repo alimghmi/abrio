@@ -52,7 +52,8 @@ PAYMENT_VIOLATION_TYPES: Final = frozenset(
         "message_balance_mismatch",
     }
 )
-DB_METRIC_CACHE_SECONDS: Final = 5.0
+READY_JOBS_CACHE_SECONDS: Final = 5.0
+PAYMENT_CONSISTENCY_CACHE_SECONDS: Final = 30.0
 
 HTTP_REQUESTS = Counter(
     "abrio_http_requests_total",
@@ -139,12 +140,13 @@ logger = get_logger(__name__)
 
 
 @dataclass
-class _DatabaseMetricCache:
+class _MetricCache:
     expires_at: float = 0.0
     had_success: bool = False
 
 
-_db_cache = _DatabaseMetricCache()
+_ready_jobs_cache = _MetricCache()
+_payment_cache = _MetricCache()
 
 
 def record_http_request(
@@ -242,27 +244,54 @@ def record_delivery_outcome(
 
 def collect_database_metrics(*, force: bool = False) -> None:
     now = time.monotonic()
-    if not force and _db_cache.had_success and now < _db_cache.expires_at:
+    _collect_ready_jobs(now=now, force=force)
+    _collect_payment_consistency(now=now, force=force)
+
+
+def _collect_ready_jobs(*, now: float, force: bool) -> None:
+    if not force and _ready_jobs_cache.had_success and now < _ready_jobs_cache.expires_at:
         return
 
     try:
         with SessionLocal() as session:
             _collect_dispatch_ready_metrics(session)
-            _collect_payment_consistency_metrics(session)
     except Exception as exc:
         logger.error(
             "dependency_unavailable",
             extra={
                 "dependency": "database",
-                "operation": "metrics_collection",
+                "operation": "metrics_collection_ready_jobs",
                 "error_type": type(exc).__name__,
             },
             exc_info=True,
         )
         return
 
-    _db_cache.had_success = True
-    _db_cache.expires_at = now + DB_METRIC_CACHE_SECONDS
+    _ready_jobs_cache.had_success = True
+    _ready_jobs_cache.expires_at = now + READY_JOBS_CACHE_SECONDS
+
+
+def _collect_payment_consistency(*, now: float, force: bool) -> None:
+    if not force and _payment_cache.had_success and now < _payment_cache.expires_at:
+        return
+
+    try:
+        with SessionLocal() as session:
+            _collect_payment_consistency_metrics(session)
+    except Exception as exc:
+        logger.error(
+            "dependency_unavailable",
+            extra={
+                "dependency": "database",
+                "operation": "metrics_collection_payment_consistency",
+                "error_type": type(exc).__name__,
+            },
+            exc_info=True,
+        )
+        return
+
+    _payment_cache.had_success = True
+    _payment_cache.expires_at = now + PAYMENT_CONSISTENCY_CACHE_SECONDS
 
 
 def latest_metrics() -> bytes:
@@ -277,8 +306,10 @@ def latest_multiprocess_metrics() -> bytes:
 
 
 def reset_database_metric_cache() -> None:
-    _db_cache.expires_at = 0.0
-    _db_cache.had_success = False
+    _ready_jobs_cache.expires_at = 0.0
+    _ready_jobs_cache.had_success = False
+    _payment_cache.expires_at = 0.0
+    _payment_cache.had_success = False
 
 
 def reset_metrics_for_tests() -> None:
