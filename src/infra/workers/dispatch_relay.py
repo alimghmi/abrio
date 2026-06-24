@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from prometheus_client import start_http_server
 
+from backend_pre_start import wait_for_database
 from core.config import get_settings
 from core.logging import configure_logging, get_logger
 from core.metrics import (
@@ -272,6 +273,7 @@ def publish_claimed_jobs(
 
 def run(priority: MessagePriority) -> None:
     configure_logging()
+    wait_for_database()
     metrics_port = int(os.environ.get("METRICS_PORT", str(METRICS_PORT)))
     start_http_server(metrics_port, addr="0.0.0.0", registry=REGISTRY)
     relay_id = create_relay_id()
