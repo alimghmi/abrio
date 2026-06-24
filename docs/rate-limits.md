@@ -103,9 +103,9 @@ The relay controls egress from the transactional outbox to RabbitMQ. Each relay 
 | Parameter | Normal | Express | Rationale |
 |-----------|--------|---------|-----------|
 | `RELAY_NORMAL_BATCH_SIZE` | 80 | — | 80 normal jobs/iteration. At `IDLE_SLEEP_SECONDS=0.5` with no idle: up to 160 publishes/s per relay replica. |
-| `RELAY_NORMAL_PER_USER_LIMIT` | 20 | — | Caps any hot user at 25% of the normal batch. With 4+ active users, all get equal share. |
+| `RELAY_NORMAL_PER_USER_LIMIT` | 20 | — | Fairness cap: a hot user gets at most 20 of 80 slots **when other users have enough work to fill the rest**. With ≥4 active users, each gets an equal interleaved share. |
 | `RELAY_EXPRESS_BATCH_SIZE` | — | 20 | Smaller batch keeps express relay latency low; express backlog should be small by design. |
-| `RELAY_EXPRESS_PER_USER_LIMIT` | — | 5 | Caps any user at 25% of the express batch. Matches the 5 msg/s per-user API cap. |
+| `RELAY_EXPRESS_PER_USER_LIMIT` | — | 5 | Fairness cap: a hot user gets at most 5 of 20 slots when others have work. Matches the 5 msg/s per-user API cap. |
 
 ### Normal/express split (80/20)
 
