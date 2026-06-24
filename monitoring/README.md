@@ -6,6 +6,7 @@ Prometheus and Grafana and joins the shared `abrio-network`.
 ## Start
 
 ```bash
+docker network create abrio-network
 docker compose up --build -d
 docker compose -f monitoring/docker-compose.yml up -d
 ```
