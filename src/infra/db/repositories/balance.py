@@ -3,8 +3,11 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from core.logging import get_logger
 from domain.errors import InvalidAmountValueError, UserNotFoundError
 from infra.db.models.balance import Balance
+
+logger = get_logger(__name__)
 
 
 class BalanceRepositry:
@@ -52,17 +55,40 @@ class BalanceRepositry:
 
     def reserve_credits(self, user_id: int, amount: Decimal) -> Balance:
         self._validate_amount(amount)
-        return self._topup_user_reserved_credits(user_id=user_id, amount=amount)
+        balance = self._topup_user_reserved_credits(user_id=user_id, amount=amount)
+        logger.info(
+            "payment_reserved",
+            extra={
+                "user_id": user_id,
+                "amount": str(amount),
+            },
+        )
+        return balance
 
     def release_credits(self, user_id: int, amount: Decimal) -> Balance:
         self._validate_amount(amount)
-        return self._deduct_user_reserved_credits(user_id=user_id, amount=amount)
+        balance = self._deduct_user_reserved_credits(user_id=user_id, amount=amount)
+        logger.info(
+            "payment_refunded",
+            extra={
+                "user_id": user_id,
+                "amount": str(amount),
+            },
+        )
+        return balance
 
     def settle(self, user_id: int, amount: Decimal) -> Balance:
         self._validate_amount(amount)
         balance = self.get_by_user_id(user_id=user_id)
         balance.reserved_credits -= amount
         balance.credits -= amount
+        logger.info(
+            "payment_deducted",
+            extra={
+                "user_id": user_id,
+                "amount": str(amount),
+            },
+        )
         return balance
 
     @staticmethod

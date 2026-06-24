@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 from sqlalchemy.orm import Session
 
 from core.logging import get_logger
+from core.metrics import record_delivery_outcome, record_dispatch_retry
 from domain.enums import (
     DispatchJobStatus,
     MessagePriority,
@@ -37,6 +38,14 @@ class _DeliveryContext:
     message_id: UUID
     recipient: str
     body: str
+    priority: MessagePriority
+
+
+@dataclass(frozen=True)
+class _CommittedDeliveryMetric:
+    priority: MessagePriority
+    outcome: str
+    message_created_at: datetime
 
 
 class DispatchUseCase:
@@ -59,15 +68,6 @@ class DispatchUseCase:
         self._balance_repo = BalanceRepositry(session)
 
     def process(self, job_id: UUID) -> None:
-        """
-          1. claim_for_delivery  - short txn: lock, validate, mark DISPATCHING.
-          2. provider.send       - no transaction, no locks held.
-          3. record_outcome      - short txn: re-lock, persist the result.
-
-        A per-call ``worker_id`` lease makes concurrent duplicate deliveries
-        safe: phase 1 skips a job already leased, and phase 3 only writes if it
-        still owns the lease.
-        """
         worker_id = uuid4().hex
 
         logger.debug(
@@ -83,9 +83,13 @@ class DispatchUseCase:
         if delivery is None:
             return
 
-        logger.debug(
-            "dispatch_provider_send_started",
-            extra={"dispatch_job_id": str(job_id), "message_id": str(delivery.message_id)},
+        logger.info(
+            "delivery_attempt_started",
+            extra={
+                "dispatch_job_id": str(job_id),
+                "message_id": str(delivery.message_id),
+                "priority": delivery.priority.value,
+            },
         )
         result = self.provider.send(
             message_id=delivery.message_id,
@@ -98,8 +102,6 @@ class DispatchUseCase:
                 "dispatch_job_id": str(job_id),
                 "message_id": str(delivery.message_id),
                 "provider_outcome": result.outcome.value,
-                "provider_message_id": result.provider_message_id,
-                "error": result.error,
             },
         )
 
@@ -110,6 +112,10 @@ class DispatchUseCase:
         moving it to DISPATCHING with a worker lease. Returns the snapshot the
         provider call needs, or None if there is nothing to deliver (duplicate,
         already terminal, not processable, or finalised here as expired)."""
+        expired_metric: _CommittedDeliveryMetric | None = None
+        expired_log_extra: dict[str, object] | None = None
+        delivery_context: _DeliveryContext | None = None
+
         with self.session.begin():
             job = self._job_repo.get_for_update(job_id)
 
@@ -150,25 +156,36 @@ class DispatchUseCase:
                 self._permanently_fail(
                     job=job, message=message, error="Express delivery deadline exceeded"
                 )
-                logger.warning(
-                    "dispatch_job_express_deadline_exceeded",
-                    extra={
-                        "dispatch_job_id": str(job.id),
-                        "message_id": str(message.id),
-                        "delivery_attempts": job.delivery_attempts,
-                        "express_ttl_seconds": self.express_ttl_seconds,
-                    },
+                expired_metric = _CommittedDeliveryMetric(
+                    priority=message.priority,
+                    outcome="permanent_failure",
+                    message_created_at=message.created_at,
                 )
-                return None
+                expired_log_extra = {
+                    "dispatch_job_id": str(job.id),
+                    "message_id": str(message.id),
+                    "priority": message.priority.value,
+                    "outcome": "permanent_failure",
+                    "delivery_attempts": job.delivery_attempts,
+                    "express_ttl_seconds": self.express_ttl_seconds,
+                    "error_type": "express_deadline_exceeded",
+                }
+            else:
+                self._message_repo.mark_dispatching(message)
+                self._job_repo.mark_dispatching(job, worker_id=worker_id)
 
-            self._message_repo.mark_dispatching(message)
-            self._job_repo.mark_dispatching(job, worker_id=worker_id)
+                delivery_context = _DeliveryContext(
+                    message_id=message.id,
+                    recipient=message.recipient,
+                    body=message.body,
+                    priority=message.priority,
+                )
 
-            return _DeliveryContext(
-                message_id=message.id,
-                recipient=message.recipient,
-                body=message.body,
-            )
+        if expired_metric is not None:
+            _record_committed_delivery_metric(expired_metric)
+            logger.warning("delivery_attempt_permanently_failed", extra=expired_log_extra or {})
+
+        return delivery_context
 
     def _is_claimable(self, job, worker_id: str) -> bool:
         now = datetime.now(UTC)
@@ -213,6 +230,13 @@ class DispatchUseCase:
         own the delivery lease taken in phase 1. If a reaper reclaimed the job or
         another worker took over (lease lost), bail without writing so we never
         double-record an outcome."""
+        committed_metric: _CommittedDeliveryMetric | None = None
+        retry_scheduled = False
+        retry_log_extra: dict[str, object] = {}
+        log_event: str | None = None
+        log_extra: dict[str, object] = {}
+        log_level = "info"
+
         with self.session.begin():
             job = self._job_repo.get_for_update(job_id)
 
@@ -241,80 +265,132 @@ class DispatchUseCase:
                 self._balance_repo.settle(user_id=message.user_id, amount=message.cost)
                 self._message_repo.mark_sent(message)
                 self._job_repo.mark_completed(job, provider_message_id=result.provider_message_id)
-                logger.info(
-                    "dispatch_job_completed",
-                    extra={
-                        "dispatch_job_id": str(job.id),
-                        "message_id": str(message.id),
-                        "provider_message_id": result.provider_message_id,
-                    },
+                committed_metric = _CommittedDeliveryMetric(
+                    priority=message.priority,
+                    outcome="success",
+                    message_created_at=message.created_at,
                 )
-                return
-
-            if result.outcome == ProviderOutcome.PERMANENT_FAILURE:
-                error = result.error or "Permanent provider failure"
-                self._permanently_fail(job=job, message=message, error=error)
-                logger.warning(
-                    "dispatch_job_permanently_failed",
-                    extra={
-                        "dispatch_job_id": str(job.id),
-                        "message_id": str(message.id),
-                        "error": error,
-                    },
-                )
-                return
-
-            next_attempt = job.delivery_attempts + 1
-
-            if next_attempt >= self.max_delivery_attempts:
-                error = result.error or "Maximum delivery attempts reached"
-                self._permanently_fail(job=job, message=message, error=error)
-                logger.warning(
-                    "dispatch_job_max_delivery_attempts_reached",
-                    extra={
-                        "dispatch_job_id": str(job.id),
-                        "message_id": str(message.id),
-                        "delivery_attempts": next_attempt,
-                        "max_delivery_attempts": self.max_delivery_attempts,
-                        "error": error,
-                    },
-                )
-                return
-
-            delay_seconds = self._calculate_backoff(next_attempt)
-            if self._express_deadline_exceeded(message, ahead_seconds=delay_seconds):
-                self._permanently_fail(
-                    job=job,
-                    message=message,
-                    error="Express delivery deadline would be exceeded before next retry",
-                )
-                logger.warning(
-                    "dispatch_job_express_deadline_exceeded",
-                    extra={
-                        "dispatch_job_id": str(job.id),
-                        "message_id": str(message.id),
-                        "delivery_attempts": next_attempt,
-                        "express_ttl_seconds": self.express_ttl_seconds,
-                    },
-                )
-                return
-
-            self._message_repo.mark_retryable_failure(message)
-            self._job_repo.mark_delivery_retry(
-                job,
-                error=result.error or "Temporary provider failure",
-                delay_seconds=delay_seconds,
-            )
-            logger.warning(
-                "dispatch_job_scheduled_for_retry",
-                extra={
+                log_event = "delivery_attempt_succeeded"
+                log_extra = {
                     "dispatch_job_id": str(job.id),
                     "message_id": str(message.id),
-                    "delivery_attempts": next_attempt,
-                    "max_delivery_attempts": self.max_delivery_attempts,
-                    "error": result.error,
-                },
-            )
+                    "priority": message.priority.value,
+                    "outcome": "success",
+                }
+
+            elif result.outcome == ProviderOutcome.PERMANENT_FAILURE:
+                error = result.error or "Permanent provider failure"
+                self._permanently_fail(job=job, message=message, error=error)
+                committed_metric = _CommittedDeliveryMetric(
+                    priority=message.priority,
+                    outcome="permanent_failure",
+                    message_created_at=message.created_at,
+                )
+                log_event = "delivery_attempt_permanently_failed"
+                log_level = "warning"
+                log_extra = {
+                    "dispatch_job_id": str(job.id),
+                    "message_id": str(message.id),
+                    "priority": message.priority.value,
+                    "outcome": "permanent_failure",
+                    "error_type": "provider_permanent_failure",
+                }
+
+            else:
+                next_attempt = job.delivery_attempts + 1
+
+                if next_attempt >= self.max_delivery_attempts:
+                    error = result.error or "Maximum delivery attempts reached"
+                    self._permanently_fail(job=job, message=message, error=error)
+                    committed_metric = _CommittedDeliveryMetric(
+                        priority=message.priority,
+                        outcome="permanent_failure",
+                        message_created_at=message.created_at,
+                    )
+                    log_event = "delivery_attempt_permanently_failed"
+                    log_level = "warning"
+                    log_extra = {
+                        "dispatch_job_id": str(job.id),
+                        "message_id": str(message.id),
+                        "priority": message.priority.value,
+                        "outcome": "permanent_failure",
+                        "delivery_attempts": next_attempt,
+                        "max_delivery_attempts": self.max_delivery_attempts,
+                        "error_type": "max_delivery_attempts_reached",
+                    }
+
+                else:
+                    delay_seconds = self._calculate_backoff(next_attempt)
+                    if self._express_deadline_exceeded(message, ahead_seconds=delay_seconds):
+                        self._permanently_fail(
+                            job=job,
+                            message=message,
+                            error="Express delivery deadline would be exceeded before next retry",
+                        )
+                        committed_metric = _CommittedDeliveryMetric(
+                            priority=message.priority,
+                            outcome="permanent_failure",
+                            message_created_at=message.created_at,
+                        )
+                        log_event = "delivery_attempt_permanently_failed"
+                        log_level = "warning"
+                        log_extra = {
+                            "dispatch_job_id": str(job.id),
+                            "message_id": str(message.id),
+                            "priority": message.priority.value,
+                            "outcome": "permanent_failure",
+                            "delivery_attempts": next_attempt,
+                            "express_ttl_seconds": self.express_ttl_seconds,
+                            "error_type": "express_deadline_exceeded",
+                        }
+
+                    else:
+                        self._message_repo.mark_retryable_failure(message)
+                        self._job_repo.mark_delivery_retry(
+                            job,
+                            error=result.error or "Temporary provider failure",
+                            delay_seconds=delay_seconds,
+                        )
+                        committed_metric = _CommittedDeliveryMetric(
+                            priority=message.priority,
+                            outcome="temporary_failure",
+                            message_created_at=message.created_at,
+                        )
+                        retry_scheduled = True
+                        retry_log_extra = {
+                            "dispatch_job_id": str(job.id),
+                            "message_id": str(message.id),
+                            "priority": message.priority.value,
+                            "retry_type": "delivery",
+                        }
+                        log_event = "delivery_attempt_temporarily_failed"
+                        log_level = "warning"
+                        log_extra = {
+                            "dispatch_job_id": str(job.id),
+                            "message_id": str(message.id),
+                            "priority": message.priority.value,
+                            "outcome": "temporary_failure",
+                            "delivery_attempts": next_attempt,
+                            "max_delivery_attempts": self.max_delivery_attempts,
+                            "retry_type": "delivery",
+                            "delay_seconds": delay_seconds,
+                            "error_type": "provider_temporary_failure",
+                        }
+
+        if committed_metric is not None:
+            _record_committed_delivery_metric(committed_metric)
+            if retry_scheduled:
+                record_dispatch_retry(
+                    priority=committed_metric.priority,
+                    retry_type="delivery",
+                    count=1,
+                )
+                logger.warning(
+                    "dispatch_retry_scheduled",
+                    extra=retry_log_extra,
+                )
+            if log_event is not None:
+                getattr(logger, log_level)(log_event, extra=log_extra)
 
     def _permanently_fail(
         self,
@@ -353,3 +429,11 @@ class DispatchUseCase:
             2 ** min(retry_count, 6),
         )
         return base_delay + random.uniform(0, 1)
+
+
+def _record_committed_delivery_metric(metric: _CommittedDeliveryMetric) -> None:
+    record_delivery_outcome(
+        priority=metric.priority,
+        outcome=metric.outcome,
+        message_created_at=metric.message_created_at,
+    )

@@ -6,7 +6,16 @@ import time
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
+from prometheus_client import start_http_server
+
+from core.config import get_settings
 from core.logging import configure_logging, get_logger
+from core.metrics import (
+    REGISTRY,
+    record_dispatch_retry,
+    record_relay_publish,
+    record_relay_publish_failure,
+)
 from domain.enums import MessagePriority
 from infra.db.repositories.dispatch_jobs import DispatchJobRepository
 from infra.db.session import SessionLocal
@@ -26,6 +35,7 @@ INFLIGHT_LEASE_SECONDS = 120
 # Throttle for the reaper sweep so it doesn't run every loop iteration.
 REAP_INTERVAL_SECONDS = 30
 REAP_LIMIT = 200
+METRICS_PORT = 9101
 
 
 @dataclass(frozen=True)
@@ -36,20 +46,25 @@ class PriorityConfig:
     per_user_limit: int
 
 
-PRIORITY_CONFIGS: dict[MessagePriority, PriorityConfig] = {
-    MessagePriority.EXPRESS: PriorityConfig(
-        priority=MessagePriority.EXPRESS,
-        queue="sms.express",
-        batch_size=20,
-        per_user_limit=5,
-    ),
-    MessagePriority.NORMAL: PriorityConfig(
-        priority=MessagePriority.NORMAL,
-        queue="sms.normal",
-        batch_size=80,
-        per_user_limit=20,
-    ),
-}
+def _build_priority_configs() -> dict[MessagePriority, PriorityConfig]:
+    s = get_settings()
+    return {
+        MessagePriority.EXPRESS: PriorityConfig(
+            priority=MessagePriority.EXPRESS,
+            queue="sms.express",
+            batch_size=s.relay_express_batch_size,
+            per_user_limit=s.relay_express_per_user_limit,
+        ),
+        MessagePriority.NORMAL: PriorityConfig(
+            priority=MessagePriority.NORMAL,
+            queue="sms.normal",
+            batch_size=s.relay_normal_batch_size,
+            per_user_limit=s.relay_normal_per_user_limit,
+        ),
+    }
+
+
+PRIORITY_CONFIGS: dict[MessagePriority, PriorityConfig] = _build_priority_configs()
 
 
 @dataclass(frozen=True)
@@ -78,6 +93,20 @@ def reclaim_stale_inflight(*, config: PriorityConfig, relay_id: str) -> int:
         )
 
     if reclaimed:
+        record_dispatch_retry(
+            priority=config.priority,
+            retry_type="delivery",
+            count=reclaimed,
+        )
+        logger.warning(
+            "dispatch_retry_scheduled",
+            extra={
+                "relay_id": relay_id,
+                "priority": config.priority.value,
+                "retry_type": "delivery",
+                "reclaimed_count": reclaimed,
+            },
+        )
         logger.warning(
             "dispatch_relay_reclaimed_stale_inflight",
             extra={
@@ -177,7 +206,7 @@ def publish_claimed_jobs(
             publish_error = exc
             failed_jobs.extend(jobs[index:])
             logger.warning(
-                "dispatch_publication_interrupted",
+                "dispatch_publish_failed",
                 extra={
                     "dispatch_job_id": str(job.id),
                     "relay_id": relay_id,
@@ -185,7 +214,7 @@ def publish_claimed_jobs(
                     "queue": queue,
                     "published_count": len(published_ids),
                     "remaining_jobs": len(failed_jobs),
-                    "error": repr(exc),
+                    "error_type": type(exc).__name__,
                 },
                 exc_info=True,
             )
@@ -209,7 +238,7 @@ def publish_claimed_jobs(
                 delay_seconds=delay_seconds,
             )
             logger.warning(
-                "dispatch_relay_publish_retry_marked",
+                "dispatch_retry_scheduled",
                 extra={
                     "relay_id": relay_id,
                     "priority": config.priority.value,
@@ -217,12 +246,19 @@ def publish_claimed_jobs(
                     "failed_count": len(failed_jobs),
                     "highest_retry_count": highest_retry_count,
                     "delay_seconds": delay_seconds,
-                    "error": repr(publish_error),
+                    "error_type": type(publish_error).__name__ if publish_error else None,
                 },
             )
 
+    record_relay_publish(priority=config.priority, count=len(published_ids))
+    record_relay_publish_failure(priority=config.priority, count=len(failed_jobs))
+    record_dispatch_retry(
+        priority=config.priority,
+        retry_type="publication",
+        count=len(failed_jobs),
+    )
     logger.info(
-        "dispatch_relay_publish_batch_finished",
+        "dispatch_jobs_published",
         extra={
             "relay_id": relay_id,
             "priority": config.priority.value,
@@ -236,6 +272,8 @@ def publish_claimed_jobs(
 
 def run(priority: MessagePriority) -> None:
     configure_logging()
+    metrics_port = int(os.environ.get("METRICS_PORT", str(METRICS_PORT)))
+    start_http_server(metrics_port, addr="0.0.0.0", registry=REGISTRY)
     relay_id = create_relay_id()
     config = PRIORITY_CONFIGS[priority]
 
@@ -264,7 +302,7 @@ def run(priority: MessagePriority) -> None:
 
         if jobs:
             logger.info(
-                "dispatch_relay_jobs_claimed",
+                "dispatch_jobs_claimed",
                 extra={
                     "relay_id": relay_id,
                     "priority": config.priority.value,

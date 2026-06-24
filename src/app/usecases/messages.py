@@ -1,3 +1,4 @@
+from collections import Counter
 from decimal import Decimal
 from uuid import UUID
 
@@ -14,6 +15,12 @@ from api.schemas.messages import (
 )
 from api.schemas.pagination import PaginatedResponse, PaginationParams  # type: ignore
 from core.config import Settings
+from core.logging import get_logger
+from core.metrics import (
+    record_idempotent_replay,
+    record_messages_submitted,
+    record_submission_rejected,
+)
 from domain.enums import MessagePriority
 from domain.errors import (
     IdempotencyConflictError,
@@ -25,6 +32,8 @@ from infra.db.models.message import Message
 from infra.db.repositories.balance import BalanceRepositry
 from infra.db.repositories.dispatch_jobs import DispatchJobRepository
 from infra.db.repositories.messages import MessageRepository
+
+logger = get_logger(__name__)
 
 
 class MessageUseCase:
@@ -65,27 +74,57 @@ class MessageUseCase:
                 None,
             )
             if isinstance(e.orig, UniqueViolation):
-                return self._repo.get_user_message_by_idempotency_key(
+                message = self._repo.get_user_message_by_idempotency_key(
                     payload.user_id, payload.idempotency_key
                 )
+                record_idempotent_replay(submission_type="single")
+                logger.info(
+                    "message_idempotent_replay",
+                    extra={
+                        "message_id": str(message.id),
+                        "priority": message.priority.value,
+                        "submission_type": "single",
+                    },
+                )
+                return message
 
             elif isinstance(e.orig, ForeignKeyViolation):
+                _record_submission_rejection(reason="invalid_request", submission_type="single")
                 raise UserNotFoundError(user_id=payload.user_id) from e
 
             elif (
                 isinstance(e.orig, CheckViolation)
                 and constraint_name == "check_credits_ge_reserved_credits"
             ):
+                _record_submission_rejection(
+                    reason="insufficient_balance", submission_type="single"
+                )
                 raise InsufficientBalanceError(payload.user_id, message_cost=message_cost) from e
 
+            _record_submission_rejection(reason="database_error", submission_type="single")
             raise e
 
+        record_messages_submitted(
+            priority=payload.priority,
+            submission_type="single",
+            count=1,
+        )
+        logger.info(
+            "message_submission_accepted",
+            extra={
+                "message_id": str(message.id),
+                "priority": payload.priority.value,
+                "submission_type": "single",
+                "message_count": 1,
+            },
+        )
         return message
 
     def batch_create_message(self, payload: BatchMessageRequest) -> BatchMessageResponse:
         message_pairs: list[tuple[Message, BatchMessageRequestItem]] = []
         duplicate_idempotency_key = self._check_duplicate_idempotency_keys(payload)
         if duplicate_idempotency_key is not None:
+            _record_submission_rejection(reason="idempotency_conflict", submission_type="batch")
             raise IdempotencyDuplicateError(duplicate_idempotency_key)
 
         user_id = payload.user_id
@@ -129,25 +168,46 @@ class MessageUseCase:
                 None,
             )
             if isinstance(e.orig, UniqueViolation):
+                _record_submission_rejection(reason="idempotency_conflict", submission_type="batch")
                 raise IdempotencyConflictError from e
 
             elif isinstance(e.orig, ForeignKeyViolation):
+                _record_submission_rejection(reason="invalid_request", submission_type="batch")
                 raise UserNotFoundError(user_id=payload.user_id) from e
 
             elif (
                 isinstance(e.orig, CheckViolation)
                 and constraint_name == "check_credits_ge_reserved_credits"
             ):
+                _record_submission_rejection(reason="insufficient_balance", submission_type="batch")
                 raise InsufficientBalanceError(
                     payload.user_id, message_cost=total_batch_cost
                 ) from e
 
+            _record_submission_rejection(reason="database_error", submission_type="batch")
             raise e
 
         message_instances = [
             MessageResponse.model_validate(message_instance)
             for message_instance, _ in message_pairs
         ]
+        priority_counts = Counter(item.priority for _, item in message_pairs)
+        for priority, count in priority_counts.items():
+            record_messages_submitted(
+                priority=priority,
+                submission_type="batch",
+                count=count,
+            )
+        logger.info(
+            "message_submission_accepted",
+            extra={
+                "submission_type": "batch",
+                "message_count": len(message_instances),
+                "priority_counts": {
+                    priority.value: count for priority, count in priority_counts.items()
+                },
+            },
+        )
         return BatchMessageResponse(
             created_count=len(message_instances), messages=message_instances
         )
@@ -179,3 +239,14 @@ class MessageUseCase:
                 return message.idempotency_key
 
         return None
+
+
+def _record_submission_rejection(*, reason: str, submission_type: str) -> None:
+    record_submission_rejected(reason=reason, submission_type=submission_type)
+    logger.info(
+        "message_submission_rejected",
+        extra={
+            "reason": reason,
+            "submission_type": submission_type,
+        },
+    )

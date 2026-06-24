@@ -5,9 +5,11 @@ from typing import Any, cast
 from uuid import uuid4
 
 import pytest
+from prometheus_client import generate_latest
 from sqlalchemy.orm import Session
 
 from app.usecases.dispatch import DispatchUseCase
+from core.metrics import REGISTRY, reset_metrics_for_tests
 from domain.enums import (
     DispatchJobStatus,
     MessagePriority,
@@ -247,6 +249,7 @@ def test_expired_express_message_is_failed_before_send() -> None:
 
 
 def test_terminal_job_ignores_duplicate_delivery() -> None:
+    reset_metrics_for_tests()
     job = FakeJob(status=DispatchJobStatus.COMPLETED)
     message = FakeMessage()
     result = ProviderResult(outcome=ProviderOutcome.SUCCESS, provider_message_id="x")
@@ -257,6 +260,7 @@ def test_terminal_job_ignores_duplicate_delivery() -> None:
     assert provider.calls == 0
     assert job.status == DispatchJobStatus.COMPLETED
     assert balance_repo.settled == []
+    assert "abrio_delivery_attempts_total{" not in generate_latest(REGISTRY).decode("utf-8")
 
 
 def test_in_flight_duplicate_is_skipped() -> None:
