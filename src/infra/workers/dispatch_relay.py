@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from prometheus_client import start_http_server
 
+from core.config import get_settings
 from core.logging import configure_logging, get_logger
 from core.metrics import (
     REGISTRY,
@@ -45,20 +46,25 @@ class PriorityConfig:
     per_user_limit: int
 
 
-PRIORITY_CONFIGS: dict[MessagePriority, PriorityConfig] = {
-    MessagePriority.EXPRESS: PriorityConfig(
-        priority=MessagePriority.EXPRESS,
-        queue="sms.express",
-        batch_size=20,
-        per_user_limit=5,
-    ),
-    MessagePriority.NORMAL: PriorityConfig(
-        priority=MessagePriority.NORMAL,
-        queue="sms.normal",
-        batch_size=80,
-        per_user_limit=20,
-    ),
-}
+def _build_priority_configs() -> dict[MessagePriority, PriorityConfig]:
+    s = get_settings()
+    return {
+        MessagePriority.EXPRESS: PriorityConfig(
+            priority=MessagePriority.EXPRESS,
+            queue="sms.express",
+            batch_size=s.relay_express_batch_size,
+            per_user_limit=s.relay_express_per_user_limit,
+        ),
+        MessagePriority.NORMAL: PriorityConfig(
+            priority=MessagePriority.NORMAL,
+            queue="sms.normal",
+            batch_size=s.relay_normal_batch_size,
+            per_user_limit=s.relay_normal_per_user_limit,
+        ),
+    }
+
+
+PRIORITY_CONFIGS: dict[MessagePriority, PriorityConfig] = _build_priority_configs()
 
 
 @dataclass(frozen=True)

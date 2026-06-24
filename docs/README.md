@@ -9,3 +9,4 @@
 | [performance.md](performance.md) | Benchmark results, analysis, scaling guidance |
 | [running-and-testing.md](running-and-testing.md) | Quick start, dev setup, test commands, load test scripts |
 | [observability.md](observability.md) | Prometheus metrics, Grafana dashboard, structured logging |
+| [rate-limits.md](rate-limits.md) | Rate limit calculations, relay dispatch tuning, environment variable reference |
