@@ -113,7 +113,7 @@ def configure_logging(settings: Settings | None = None) -> None:
             "loggers": {
                 "uvicorn.access": {
                     "handlers": ["console"],
-                    "level": active_settings.log_level.upper(),
+                    "level": "WARNING",
                     "propagate": False,
                 },
             },
