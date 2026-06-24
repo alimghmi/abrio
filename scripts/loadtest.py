@@ -43,6 +43,20 @@ def create_user(name: str) -> int:
     return int(resp.json()["id"])
 
 
+def ensure_rate_limiting_disabled() -> bool:
+    probe = create_user(f"rl-probe-{uuid4().hex[:8]}")
+    topup(probe, 1000)
+    statuses = [send(probe, f"rl probe {i}", "express") for i in range(60)]
+    if 429 in statuses:
+        print(
+            "\nERROR: the API is rate limiting (got 429 responses). Load tests must "
+            "run with rate limiting OFF so accept/reject counts stay exact.\n"
+            "Set RATE_LIMIT_ENABLED=false on the API (the default) and re-run."
+        )
+        return False
+    return True
+
+
 def topup(user_id: int, amount: int) -> None:
     resp = client.post(f"/users/{user_id}/topup", json={"credit_amount": amount})
     resp.raise_for_status()
@@ -254,6 +268,9 @@ def main() -> int:
         client.get("/health/ready").raise_for_status()
     except Exception as exc:
         print(f"API not reachable: {exc}")
+        return 2
+
+    if not ensure_rate_limiting_disabled():
         return 2
 
     report = Report()

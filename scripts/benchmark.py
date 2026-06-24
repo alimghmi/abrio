@@ -388,6 +388,14 @@ def print_report(
     if other:
         print(_row("Other:", f"{other:>7}  {pct(other)}"))
 
+    if total and rate_limited / total > 0.05:
+        print()
+        print(
+            f"  WARNING: {pct(rate_limited).strip()} of requests were rate limited (429). "
+            "Throughput below reflects ingress throttling, not system capacity. "
+            "Run with RATE_LIMIT_ENABLED=false (the default) and re-run."
+        )
+
     print()
     print(f"  {_hr()}")
     print(f"  API latency - all {total} requests (ms)")
@@ -443,12 +451,29 @@ def print_report(
     print()
 
 
+def ensure_rate_limiting_disabled() -> bool:
+    probe = create_user(f"rl-probe-{uuid4().hex[:8]}")
+    topup(probe, 1000)
+    statuses = [submit(probe, "express")[0] for _ in range(60)]
+    if 429 in statuses:
+        print(
+            "\nERROR: the API is rate limiting (got 429 responses). The benchmark "
+            "measures system capacity, not the rate limiter — run with rate limiting "
+            "OFF (RATE_LIMIT_ENABLED=false, the default) and re-run."
+        )
+        return False
+    return True
+
+
 def main() -> int:
     print(f"Connecting to {BASE_URL}...")
     try:
         client.get("/health/ready").raise_for_status()
     except Exception as exc:
         print(f"API not reachable: {exc}")
+        return 2
+
+    if not ensure_rate_limiting_disabled():
         return 2
 
     print(f"Creating {USERS} test users with {CREDITS} credits each...")

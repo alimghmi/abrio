@@ -17,8 +17,8 @@ services:
       COST_PER_MESSAGE: ${COST_PER_MESSAGE:-1.00}
       COST_PER_EXPRESS_MESSAGE: ${COST_PER_EXPRESS_MESSAGE:-1.00}
       MAX_MESSAGES_PER_BATCH: ${MAX_MESSAGES_PER_BATCH:-100}
-      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
-      RATE_LIMIT_FAIL_OPEN: ${RATE_LIMIT_FAIL_OPEN:-false}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-false}
+      RATE_LIMIT_FAIL_OPEN: ${RATE_LIMIT_FAIL_OPEN:-true}
       RATE_LIMIT_KEY_PREFIX: ${RATE_LIMIT_KEY_PREFIX:-sms_gateway:rate_limit}
       RATE_LIMIT_REDIS_URL: ${RATE_LIMIT_REDIS_URL:-redis://redis:6379/0}
       RATE_LIMIT_NORMAL_MESSAGES_PER_MINUTE: ${RATE_LIMIT_NORMAL_MESSAGES_PER_MINUTE:-1200}
@@ -171,7 +171,6 @@ services:
       METRICS_PORT: ${WORKER_METRICS_PORT:-9102}
       PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus-multiproc
       DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+psycopg://sms_gateway:sms_gateway@postgres:5432/sms_gateway}
-      DB_CREATE_ALL: ${DB_CREATE_ALL:-true}
       REDIS_URL: ${DOCKER_REDIS_URL:-redis://redis:6379/0}
       CELERY_BROKER_URL: ${DOCKER_CELERY_BROKER_URL:-amqp://guest:guest@rabbitmq:5672//}
       CELERY_RESULT_BACKEND: ${DOCKER_CELERY_RESULT_BACKEND:-redis://redis:6379/1}
@@ -208,7 +207,6 @@ services:
       METRICS_PORT: ${WORKER_METRICS_PORT:-9102}
       PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus-multiproc
       DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+psycopg://sms_gateway:sms_gateway@postgres:5432/sms_gateway}
-      DB_CREATE_ALL: ${DB_CREATE_ALL:-true}
       REDIS_URL: ${DOCKER_REDIS_URL:-redis://redis:6379/0}
       CELERY_BROKER_URL: ${DOCKER_CELERY_BROKER_URL:-amqp://guest:guest@rabbitmq:5672//}
       CELERY_RESULT_BACKEND: ${DOCKER_CELERY_RESULT_BACKEND:-redis://redis:6379/1}
