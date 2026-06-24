@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     rate_limit_normal_messages_burst: int = Field(gt=0, default=200)
     rate_limit_express_messages_per_minute: int = Field(gt=0, default=300)
     rate_limit_express_messages_burst: int = Field(gt=0, default=100)
-    # Batch endpoint: max_messages_per_batch=100 items/request × 1.2/s = ~120/min per user.
+    # Batch endpoint: max_messages_per_batch=100 items/request x 1.2/s = ~120/min per user.
     rate_limit_batch_requests_per_minute: int = Field(gt=0, default=120)
     rate_limit_batch_requests_burst: int = Field(gt=0, default=20)
 
@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     rate_limit_pricing_burst: int = Field(gt=0, default=40)
 
     # Global limits based on 100M msgs/day ≈ 69,444/min average.
-    # 5× peak factor → ~347,000/min total. 80/20 normal/express split:
+    # 5x peak factor → ~347,000/min total. 80/20 normal/express split:
     #   Normal: 300,000/min, burst 30,000 (≈10% of per-minute window).
     #   Express: 75,000/min, burst 15,000.
     # Batch: system_messages/100 msg per batch ≈ 3,750/min; round to 3,000 + burst 300.
