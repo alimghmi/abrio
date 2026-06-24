@@ -152,4 +152,4 @@ The relay's `claim_batch` uses a two-pass window function query:
 1. **Fairness pass**: cap each customer at `per_user_limit` jobs per cycle, interleaved round-robin.
 2. **Top-up pass**: fill remaining batch capacity FIFO, so throughput is not wasted when only one customer is active.
 
-This ensures a flooding tenant cannot monopolise relay capacity while other tenants have pending jobs. Verified by the load-test fairness scenario.
+Small tenants are never starved — they are served in the first batch even alongside a large flooder (verified by the load-test and concurrency fairness scenarios). The per-batch hot-tenant share is **not** hard-capped at `per_user_limit / batch_size`: when few other tenants have work, the work-conserving top-up pass lets the flooder use the otherwise-idle slots rather than waste them. The cap is also per-relay-batch, so it softens with multiple relay replicas.

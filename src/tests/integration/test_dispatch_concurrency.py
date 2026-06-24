@@ -25,7 +25,7 @@ from infra.db.repositories.dispatch_jobs import DispatchJobRepository
 from infra.providers.mock import MockSmsProvider
 from infra.providers.types import ProviderOutcome
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.concurrency]
 
 SETTINGS = Settings(cost_per_message=Decimal("1.00"), cost_per_express_message=Decimal("1.00"))
 
