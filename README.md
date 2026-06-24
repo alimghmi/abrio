@@ -2,6 +2,9 @@
 
 Multi-tenant SMS gateway for idempotent message submission, credit reservation, transactional outbox dispatch, priority queues, fair task distribution, and safe retries.
 
+![openapi](docs/openapi.png)
+![grafana](docs/grafana.png)
+
 ## Run
 
 ```bash
