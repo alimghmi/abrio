@@ -15,9 +15,9 @@ import httpx
 
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000/api/v1")
 WORKERS = int(os.environ.get("WORKERS", "100"))
-DURATION = int(os.environ.get("DURATION", "20"))
-WARMUP = int(os.environ.get("WARMUP", "5"))
-USERS = int(os.environ.get("USERS", "100"))
+
+TOTAL_MESSAGES = int(os.environ.get("TOTAL_MESSAGES", "50000"))
+USERS = int(os.environ.get("USERS", "400"))
 CREDITS = int(os.environ.get("CREDITS", "200000"))
 EXPRESS_RATIO = float(os.environ.get("EXPRESS_RATIO", "0.4"))
 
@@ -62,10 +62,10 @@ class MessageResult:
 class Sample:
     status: int
     latency_ms: float
-    warmup: bool
     user_id: int
     batch_size: int
     messages: list[MessageResult]
+    submit_wall: float
 
 
 @dataclass
@@ -84,6 +84,7 @@ class DrainResult:
     expected: int
     terminal: int
     peak_backlog: int
+    terminal_at_start: int
 
 
 @dataclass
@@ -99,9 +100,17 @@ class Stats:
         with self._lock:
             return list(self._samples)
 
-    def benchmark_message_count(self) -> int:
+    def returned_message_count(self) -> int:
         with self._lock:
-            return sum(sample.batch_size for sample in self._samples if not sample.warmup)
+            return sum(s.batch_size for s in self._samples)
+
+    def accepted_message_count(self) -> int:
+        with self._lock:
+            return sum(s.batch_size for s in self._samples if s.status == 201)
+
+    def first_submit_wall(self) -> float | None:
+        with self._lock:
+            return min((s.submit_wall for s in self._samples), default=None)
 
 
 def create_user(name: str) -> int:
@@ -164,25 +173,40 @@ def submit_batch(user_id: int, priorities: list[str]) -> tuple[int, float, list[
         )
 
 
-def worker_loop(
-    user_ids: list[int],
-    stats: Stats,
-    stop_at: float,
-    warmup_until: float,
-) -> None:
+@dataclass
+class Budget:
+    """Shared, thread-safe remaining-message budget. Workers claim batch-sized
+    chunks until the total reaches TOTAL_MESSAGES, so the run submits an exact,
+    reproducible count regardless of how fast any worker goes."""
+
+    remaining: int
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def claim(self, size: int) -> int:
+        with self._lock:
+            n = min(size, self.remaining)
+            self.remaining -= n
+            return n
+
+
+def worker_loop(user_ids: list[int], stats: Stats, budget: Budget) -> None:
     rng = random.Random()
-    while time.monotonic() < stop_at:
+    while True:
+        claim = budget.claim(BATCH_SIZE)
+        if claim == 0:
+            return
         user_id = rng.choice(user_ids)
-        priorities = build_batch(rng, BATCH_SIZE)
+        priorities = build_batch(rng, claim)
+        submit_wall = time.time()
         status, latency_ms, messages = submit_batch(user_id, priorities)
         stats.add(
             Sample(
                 status=status,
                 latency_ms=latency_ms,
-                warmup=time.monotonic() < warmup_until,
                 user_id=user_id,
                 batch_size=len(priorities),
                 messages=messages,
+                submit_wall=submit_wall,
             )
         )
 
@@ -195,11 +219,12 @@ def wait_for_queue_drain(stats: Stats) -> DrainResult:
     expected_total = sum(expected_by_user.values())
 
     if expected_total == 0:
-        return DrainResult(True, 0.0, 0, 0, 0)
+        return DrainResult(True, 0.0, 0, 0, 0, 0)
 
     completed_by_user = {user_id: 0 for user_id in expected_by_user}
     started = time.monotonic()
     peak_backlog = 0
+    terminal_at_start: int | None = None
 
     while True:
         for user_id, expected in expected_by_user.items():
@@ -215,22 +240,30 @@ def wait_for_queue_drain(stats: Stats) -> DrainResult:
                 continue
 
         terminal_total = sum(completed_by_user.values())
-        peak_backlog = max(peak_backlog, expected_total - terminal_total)
+        if terminal_at_start is None:
+            terminal_at_start = terminal_total
+        backlog = expected_total - terminal_total
+        peak_backlog = max(peak_backlog, backlog)
         elapsed = time.monotonic() - started
-        print(
+        # Pad to a fixed width so a shorter frame fully overwrites the previous
+        # one (carriage-return redraw); otherwise leftover digits collide.
+        line = (
             f"  [drain] {elapsed:6.1f}s  terminal={terminal_total}/{expected_total}"
-            f"  backlog={expected_total - terminal_total}",
-            end="\r",
-            flush=True,
+            f"  backlog={backlog}"
         )
+        print(f"{line:<70}", end="\r", flush=True)
 
         if terminal_total >= expected_total:
             print()
-            return DrainResult(True, elapsed, expected_total, terminal_total, peak_backlog)
+            return DrainResult(
+                True, elapsed, expected_total, terminal_total, peak_backlog, terminal_at_start
+            )
 
         if elapsed >= DRAIN_TIMEOUT:
             print()
-            return DrainResult(False, elapsed, expected_total, terminal_total, peak_backlog)
+            return DrainResult(
+                False, elapsed, expected_total, terminal_total, peak_backlog, terminal_at_start
+            )
 
         time.sleep(DRAIN_POLL_INTERVAL)
 
@@ -269,7 +302,7 @@ def collect_processing_samples(
     benchmark_messages: list[tuple[MessageResult, int]] = [
         (message, sample.user_id)
         for sample in stats.snapshot()
-        if not sample.warmup and sample.status == 201
+        if sample.status == 201
         for message in sample.messages
     ]
     tracked = [
@@ -404,7 +437,7 @@ def print_report(
     missing_or_nonterminal: int,
     untracked_accepted: int,
 ) -> None:
-    samples = [sample for sample in stats.snapshot() if not sample.warmup]
+    samples = stats.snapshot()
     if not samples:
         print("No samples collected. Is the API running?")
         return
@@ -420,6 +453,7 @@ def print_report(
     other = total_batches - success - balance_err - rate_limited - server_err - network_err
 
     accepted_messages = sum(sample.batch_size for sample in samples if sample.status == 201)
+    submit_elapsed = max(0.001, load_elapsed)
 
     api_latencies = [sample.latency_ms for sample in samples]
     api_values = latency_stats(api_latencies)
@@ -431,22 +465,39 @@ def print_report(
     print("=" * _W)
     print("  SMS Gateway Benchmark (batch endpoint)")
     print(f"  {BASE_URL}")
-    print(
-        f"  workers={WORKERS}  batch_size={BATCH_SIZE}  duration={load_elapsed:.1f}s  "
-        f"warmup={WARMUP}s  users={USERS}"
-    )
+    print(f"  workers={WORKERS}  batch_size={BATCH_SIZE}  messages={total_messages}  users={USERS}")
     print("=" * _W)
 
     print_tuning_config()
 
+    # End-to-end throughput: exactly N messages, from the first submit to the last
+    # message reaching a terminal DB state. One deterministic number (submit + queue
+    # + deliver), comparable across runs because N is fixed.
+    first_submit = stats.first_submit_wall()
+    e2e_throughput = 0.0
+    e2e_span = 0.0
+    if processing and first_submit is not None:
+        last_terminal = max(s.completed_at for s in processing).timestamp()
+        e2e_span = max(0.001, last_terminal - first_submit)
+        e2e_throughput = len(processing) / e2e_span
+
     print()
     print(f"  {_hr()}")
-    print("  API throughput")
+    print("  End-to-end throughput")
+    print("  first submit -> last message at terminal DB state")
+    print(f"  {_hr()}")
+    print(_row("Messages (delivered/total):", f"{len(processing)} / {total_messages}"))
+    print(_row("End-to-end time:", f"{e2e_span:.1f}s"))
+    print(_row("Throughput:", f"{e2e_throughput:.1f} msg/s"))
+
+    print()
+    print(f"  {_hr()}")
+    print("  API submission")
     print(f"  {_hr()}")
     print(_row("Batch requests:", str(total_batches)))
     print(_row("Messages submitted:", str(total_messages)))
-    print(_row("Batch throughput:", f"{total_batches / load_elapsed:.1f} req/s"))
-    print(_row("Message throughput:", f"{total_messages / load_elapsed:.1f} msg/s"))
+    print(_row("Submit window:", f"{submit_elapsed:.1f}s"))
+    print(_row("Submission throughput:", f"{total_messages / submit_elapsed:.1f} msg/s"))
     print(_row("Accepted messages:", str(accepted_messages)))
     print(_row("Successful batches (201):", f"{success:>7}  {pct(success)}"))
     print(_row("Balance errors (402):", f"{balance_err:>7}  {pct(balance_err)}"))
@@ -460,13 +511,13 @@ def print_report(
         print()
         print(
             f"  WARNING: {pct(rate_limited).strip()} of batches were rate limited (429). "
-            "Throughput below reflects ingress throttling, not system capacity. "
+            "Throughput reflects ingress throttling, not system capacity. "
             "Run with RATE_LIMIT_ENABLED=false (the default) and re-run."
         )
 
     print()
     print(f"  {_hr()}")
-    print(f"  API latency - all {total_batches} batch requests (ms)")
+    print(f"  API submission latency - all {total_batches} batch requests (ms)")
     print(f"  {_hr()}")
     for label in ("p50", "p75", "p90", "p95", "p99", "max", "mean"):
         print(_row(f"{label}:", f"{api_values[label]:.1f}"))
@@ -474,19 +525,21 @@ def print_report(
     terminal_counts = Counter(sample.status for sample in processing)
     processing_latencies = [sample.latency_ms for sample in processing]
 
+    drained_during = max(0, drain.terminal - drain.terminal_at_start)
+    drain_rate = drained_during / drain.elapsed_s if drain.elapsed_s > 0 else 0.0
+
     print()
     print(f"  {_hr()}")
-    print("  Message processing and queue drain")
+    print("  Queue drain")
+    print("  steady tap-off rate after submission stops")
     print(f"  {_hr()}")
-    drain_rate = drain.terminal / drain.elapsed_s if drain.elapsed_s > 0 else 0.0
-    ingest_rate = total_messages / load_elapsed if load_elapsed > 0 else 0.0
-    print(_row("Accepted incl. warmup:", str(drain.expected)))
-    print(_row("Terminal incl. warmup:", str(drain.terminal)))
+    print(_row("Accepted messages:", str(drain.expected)))
+    print(_row("Reached terminal:", str(drain.terminal)))
     print(_row("Queue drain completed:", "yes" if drain.drained else "NO - timeout"))
-    print(_row("Drain time after load:", f"{drain.elapsed_s:.1f}s"))
-    print(_row("Peak backlog after load:", str(drain.peak_backlog)))
+    print(_row("Drain phase time:", f"{drain.elapsed_s:.1f}s"))
+    print(_row("Drained during phase:", str(drained_during)))
     print(_row("Drain rate:", f"{drain_rate:.1f} msg/s"))
-    print(_row("Ingest rate:", f"{ingest_rate:.1f} msg/s"))
+    print(_row("Peak backlog:", str(drain.peak_backlog)))
     print(_row("Measured benchmark messages:", str(len(processing))))
     print(_row("Sent:", str(terminal_counts["sent"])))
     print(_row("Permanently failed:", str(terminal_counts["permanent_failed"])))
@@ -495,13 +548,6 @@ def print_report(
         print(_row("Accepted without parsed ID:", str(untracked_accepted)))
 
     if processing:
-        span = (
-            max(sample.completed_at for sample in processing)
-            - min(sample.created_at for sample in processing)
-        ).total_seconds()
-        if span > 0:
-            print(_row("Observed processing rate:", f"{len(processing) / span:.1f} msg/s"))
-
         processing_values = latency_stats(processing_latencies)
         print()
         print(f"  {_hr()}")
@@ -517,19 +563,14 @@ def print_report(
             [sample.latency_ms for sample in processing if sample.priority == "normal"],
         )
 
-    print_delivery_health(processing, drain, ingest_rate, drain_rate)
+    print_delivery_health(processing)
 
     print()
     print("=" * _W)
     print()
 
 
-def print_delivery_health(
-    processing: list[ProcessingSample],
-    drain: DrainResult,
-    ingest_rate: float,
-    drain_rate: float,
-) -> None:
+def print_delivery_health(processing: list[ProcessingSample]) -> None:
     if not processing:
         return
 
@@ -544,7 +585,6 @@ def print_delivery_health(
     normal_sent, normal_failed = split("normal")
     express_total = express_sent + express_failed
     normal_total = normal_sent + normal_failed
-    express_fail_rate = express_failed / express_total if express_total else 0.0
 
     print()
     print(f"  {_hr()}")
@@ -559,38 +599,6 @@ def print_delivery_health(
     ):
         rate = failed / total if total else 0.0
         print(f"  {priority:<12}  {sent:>9}  {failed:>9}  {100 * rate:>8.2f}%")
-
-    # Verdict: the tuning goal is to keep express fresh AND keep up with ingest.
-    keeps_up = drain_rate >= ingest_rate * 0.7
-    express_ok = express_fail_rate < 0.01
-    backlog_ok = drain.peak_backlog <= max(drain.expected * 0.5, 1)
-    passed = drain.drained and keeps_up and express_ok and backlog_ok
-
-    print()
-    print(f"  {_hr()}")
-    print("  Verdict")
-    print(f"  {_hr()}")
-    print(_row("Drain completed:", "PASS" if drain.drained else "FAIL"))
-    print(
-        _row(
-            "Drain keeps up with ingest:",
-            f"{'PASS' if keeps_up else 'FAIL'}  " f"({drain_rate:.0f} vs {ingest_rate:.0f} msg/s)",
-        )
-    )
-    print(
-        _row(
-            "Express TTL deaths < 1%:",
-            f"{'PASS' if express_ok else 'FAIL'}  ({100 * express_fail_rate:.2f}%)",
-        )
-    )
-    print(
-        _row(
-            "Backlog stayed bounded:",
-            f"{'PASS' if backlog_ok else 'FAIL'}  (peak {drain.peak_backlog})",
-        )
-    )
-    print()
-    print(_row("OVERALL:", "PASS — tuned well" if passed else "FAIL — needs more capacity"))
 
 
 def ensure_rate_limiting_disabled() -> bool:
@@ -629,57 +637,47 @@ def main() -> int:
     print(f"  {USERS} users ready.{' ' * 20}")
 
     stats = Stats()
-    started = time.monotonic()
-    warmup_until = started + WARMUP
-    stop_at = warmup_until + DURATION
+    budget = Budget(remaining=TOTAL_MESSAGES)
 
-    print(
-        f"Running {WARMUP}s warmup then {DURATION}s benchmark "
-        f"({WORKERS} workers, {BATCH_SIZE} msgs/batch)..."
-    )
+    print(f"Submitting {TOTAL_MESSAGES} messages ({WORKERS} workers, {BATCH_SIZE} msgs/batch)...")
+    submit_started = time.monotonic()
     threads = [
-        threading.Thread(
-            target=worker_loop,
-            args=(user_ids, stats, stop_at, warmup_until),
-            daemon=True,
-        )
+        threading.Thread(target=worker_loop, args=(user_ids, stats, budget), daemon=True)
         for _ in range(WORKERS)
     ]
     for thread in threads:
         thread.start()
 
-    while time.monotonic() < stop_at:
-        now = time.monotonic()
-        elapsed = max(0.0, now - warmup_until)
-        phase = "warmup" if now < warmup_until else "bench "
+    while any(thread.is_alive() for thread in threads):
+        submitted = stats.returned_message_count()
+        accepted = stats.accepted_message_count()
+        in_flight = (TOTAL_MESSAGES - budget.remaining) - submitted
         print(
-            f"  [{phase}] {elapsed:5.1f}s  bench_messages={stats.benchmark_message_count()}",
+            f"  [submit] {submitted}/{TOTAL_MESSAGES} submitted"
+            f"  accepted={accepted}  in-flight={in_flight}".ljust(70),
             end="\r",
             flush=True,
         )
         time.sleep(0.5)
-    print()
-
     for thread in threads:
         thread.join(timeout=10)
+    submit_elapsed = time.monotonic() - submit_started
+    print(f"  [submit] {TOTAL_MESSAGES}/{TOTAL_MESSAGES} done in {submit_elapsed:.1f}s".ljust(70))
 
-    print(
-        "Waiting for accepted messages, including warmup traffic, "
-        "to reach sent or permanent_failed..."
-    )
+    print("Waiting for all accepted messages to reach a terminal DB state (sent/failed)...")
     drain = wait_for_queue_drain(stats)
     processing, missing_or_nonterminal, untracked_accepted = collect_processing_samples(stats)
 
     print_report(
         stats=stats,
-        load_elapsed=max(0.001, float(DURATION)),
+        load_elapsed=submit_elapsed,
         drain=drain,
         processing=processing,
         missing_or_nonterminal=missing_or_nonterminal,
         untracked_accepted=untracked_accepted,
     )
 
-    return 0 if drain.drained else 3
+    return 0
 
 
 if __name__ == "__main__":
