@@ -91,6 +91,8 @@ class Settings(BaseSettings):
     rate_limit_system_messages_burst: int = Field(gt=0, default=37_500)
 
     database_url: str = "postgresql+psycopg://sms_gateway:sms_gateway@localhost:5432/sms_gateway"
+    db_pool_size: int = Field(gt=0, default=2)
+    db_max_overflow: int = Field(ge=0, default=3)
     db_create_all: bool = True
     db_pre_start_retries: int = 30
     db_pre_start_interval_seconds: float = 1.0
