@@ -40,7 +40,7 @@ Tune with env vars:
 
 ```bash
 HOT_COUNT=4000 uv run python scripts/loadtest.py
-WORKERS=100 DURATION=10 uv run python scripts/benchmark.py
+uv run python scripts/benchmark.py
 ```
 
 ## Docs
