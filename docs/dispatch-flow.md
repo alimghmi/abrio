@@ -192,9 +192,12 @@ To increase throughput, scale these components independently:
 | PostgreSQL | PgBouncer + read replicas for queries | Scale read workload |
 | RabbitMQ | Cluster | Broker HA and throughput |
 
-Benchmark result on a single machine (i7-13650HX, 20 cores, WSL2, Docker):
-- API submission: **~180 req/s** single-message (1 uvicorn worker, no tuning)
-- End-to-end p50: **~300 ms** (DB → relay → broker → worker → DB)
-- Queue drain after load: **2 seconds** for ~4,000 messages
+Benchmark result on a single Hetzner CCX43 (16 vCPU, 61 GiB, Docker), 50,000 messages:
 
-With `--workers N` in uvicorn and scaled Celery concurrency, these numbers scale near-linearly until DB or broker becomes the bottleneck.
+- End-to-end throughput: **838 msg/s** (submit → all terminal)
+- Drain rate (delivery, after submission stops): **1,028 msg/s**
+- API submission: **1,981 msg/s** (batch endpoint, 4 uvicorn workers)
+
+See [performance.md](performance.md) for the full configuration and run details. Throughput
+scales with `WORKER_*_CONCURRENCY` and `RELAY_*_REPLICAS` (SKIP LOCKED keeps replicas safe)
+until DB row-contention or broker becomes the bottleneck.

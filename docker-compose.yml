@@ -4,7 +4,7 @@ services:
       context: .
     command: >
       sh -c "python -m backend_pre_start &&
-      uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+      uvicorn main:app --workers 4 --host 0.0.0.0 --port 8000 --reload"
     environment:
       APP_NAME: ${APP_NAME:-abrio-gateway}
       APP_ENV: ${APP_ENV:-local}
@@ -95,6 +95,8 @@ services:
     build:
       context: .
     command: python -m infra.workers.dispatch_relay -Q normal
+    deploy:
+      replicas: ${RELAY_NORMAL_REPLICAS:-10}
     environment:
       APP_NAME: ${APP_NAME:-abrio-gateway}
       APP_ENV: ${APP_ENV:-local}
@@ -103,7 +105,7 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-json}
       SERVICE_NAME: ${RELAY_SERVICE_NAME:-abrio-relay}
       METRICS_PORT: ${RELAY_METRICS_PORT:-9101}
-      RELAY_NORMAL_BATCH_SIZE: ${RELAY_NORMAL_BATCH_SIZE:-80}
+      RELAY_NORMAL_BATCH_SIZE: ${RELAY_NORMAL_BATCH_SIZE:-160}
       RELAY_NORMAL_PER_USER_LIMIT: ${RELAY_NORMAL_PER_USER_LIMIT:-20}
       DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+psycopg://sms_gateway:sms_gateway@postgres:5432/sms_gateway}
       CELERY_BROKER_URL: ${DOCKER_CELERY_BROKER_URL:-amqp://guest:guest@rabbitmq:5672//}
@@ -125,6 +127,8 @@ services:
     build:
       context: .
     command: python -m infra.workers.dispatch_relay -Q express
+    deploy:
+      replicas: ${RELAY_EXPRESS_REPLICAS:-6}
     environment:
       APP_NAME: ${APP_NAME:-abrio-gateway}
       APP_ENV: ${APP_ENV:-local}
@@ -133,8 +137,8 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-json}
       SERVICE_NAME: ${RELAY_SERVICE_NAME:-abrio-relay}
       METRICS_PORT: ${RELAY_METRICS_PORT:-9101}
-      RELAY_EXPRESS_BATCH_SIZE: ${RELAY_EXPRESS_BATCH_SIZE:-20}
-      RELAY_EXPRESS_PER_USER_LIMIT: ${RELAY_EXPRESS_PER_USER_LIMIT:-5}
+      RELAY_EXPRESS_BATCH_SIZE: ${RELAY_EXPRESS_BATCH_SIZE:-80}
+      RELAY_EXPRESS_PER_USER_LIMIT: ${RELAY_EXPRESS_PER_USER_LIMIT:-10}
       DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+psycopg://sms_gateway:sms_gateway@postgres:5432/sms_gateway}
       CELERY_BROKER_URL: ${DOCKER_CELERY_BROKER_URL:-amqp://guest:guest@rabbitmq:5672//}
       CELERY_RESULT_BACKEND: ${DOCKER_CELERY_RESULT_BACKEND:-redis://redis:6379/1}
@@ -159,7 +163,7 @@ services:
       sh -c "rm -rf /tmp/prometheus-multiproc &&
       mkdir -p /tmp/prometheus-multiproc &&
       celery -A infra.workers.celery_app.celery_app worker
-      --loglevel=${LOG_LEVEL:-INFO} -Q sms.normal"
+      --loglevel=${LOG_LEVEL:-INFO} -Q sms.normal --concurrency ${WORKER_NORMAL_CONCURRENCY:-120}"
     environment:
       APP_NAME: ${APP_NAME:-abrio-gateway}
       APP_ENV: ${APP_ENV:-local}
@@ -195,7 +199,7 @@ services:
       sh -c "rm -rf /tmp/prometheus-multiproc &&
       mkdir -p /tmp/prometheus-multiproc &&
       celery -A infra.workers.celery_app.celery_app worker
-      --loglevel=${LOG_LEVEL:-INFO} -Q sms.express"
+      --loglevel=${LOG_LEVEL:-INFO} -Q sms.express --concurrency ${WORKER_EXPRESS_CONCURRENCY:-60}"
     environment:
       APP_NAME: ${APP_NAME:-abrio-gateway}
       APP_ENV: ${APP_ENV:-local}
@@ -226,6 +230,24 @@ services:
 
   postgres:
     image: postgres:16-alpine
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-1GB}
+      - -c
+      - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-4GB}
+      - -c
+      - wal_buffers=${POSTGRES_WAL_BUFFERS:-64MB}
+      - -c
+      - max_wal_size=${POSTGRES_MAX_WAL_SIZE:-8GB}
+      - -c
+      - checkpoint_completion_target=${POSTGRES_CHECKPOINT_COMPLETION_TARGET:-0.9}
+      - -c
+      - commit_delay=${POSTGRES_COMMIT_DELAY:-2000}
+      - -c
+      - commit_siblings=${POSTGRES_COMMIT_SIBLINGS:-5}
+      - -c
+      - max_connections=${POSTGRES_MAX_CONNECTIONS:-300}
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-sms_gateway}
       POSTGRES_USER: ${POSTGRES_USER:-sms_gateway}

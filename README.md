@@ -2,8 +2,8 @@
 
 Multi-tenant SMS gateway for idempotent message submission, credit reservation, transactional outbox dispatch, priority queues, fair task distribution, and safe retries.
 
-![openapi](docs/openapi.png)
-![grafana](docs/grafana.png)
+![openapi](docs/img/openapi.png)
+![grafana](docs/img/grafana.png)
 
 ## Run
 
@@ -40,7 +40,7 @@ Tune with env vars:
 
 ```bash
 HOT_COUNT=4000 uv run python scripts/loadtest.py
-WORKERS=100 DURATION=10 uv run python scripts/benchmark.py
+TOTAL_MESSAGES=50000 uv run python scripts/benchmark.py
 ```
 
 ## Docs
